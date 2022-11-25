@@ -4,8 +4,6 @@
 
 (in-package :symath)
 
-(defparameter *last-expr-op* nil)
-
 (defun mequal (a b)
   (or (equal a b)
       (and (numberp a)
@@ -154,8 +152,7 @@
            (multiple-value-list
              (funcall fn (cond
                            ((listp arg)
-                            (let ((*last-expr-op* (car arg)))
-                              (cons (car arg) (mapcar #'rfn (cdr arg)))))
+                            (cons (car arg) (mapcar #'rfn (cdr arg))))
                            ((arrayp arg)
                             (map-array #'rfn arg))
                            (t arg)))))))
