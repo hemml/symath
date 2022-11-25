@@ -1,3 +1,5 @@
+(ql:quickload :clunit)
+
 (defpackage :symath-test
   (:use cl symath clunit))
 
