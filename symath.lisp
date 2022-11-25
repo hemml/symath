@@ -1,0 +1,1013 @@
+(defpackage :symath
+  (:use cl)
+  (:export simplify array-multiply))
+
+(in-package :symath)
+
+(defparameter *last-expr-op* nil)
+
+(defun mequal (a b)
+  (or (equal a b)
+      (and (numberp a)
+           (numberp b)
+           (= a b))))
+
+(defun isfunc (f e) (and (listp e) (equal (car e) f)))
+
+(defun filter-func (f l &optional invrs)
+  (labels ((flt (e) (isfunc f e)))
+    (if invrs
+        (remove-if #'flt l)
+        (remove-if-not #'flt l))))
+
+(defun all-arraysp (l)
+  "Check if all elements in l are arrays"
+  (and (arrayp (car l))
+       (or (not (cdr l))
+           (all-arraysp (cdr l)))))
+
+(defun equal-dimsp (l)
+  "Check if all arrays in l has the same dimensions"
+  (and (all-arraysp l)
+       (apply #'= (mapcar #'array-rank l))
+       (notany #'null
+               (apply #'mapcar
+                 (cons #'=
+                       (mapcar #'array-dimensions l))))))
+
+(defun map-array (lam &rest arrs)
+  "Like #'mapcar, but for arrays"
+  (if (and (all-arraysp arrs)
+           (equal-dimsp arrs))
+    (let ((arr (make-array (array-dimensions (car arrs)))))
+      (loop for i below (apply #'* (array-dimensions (car arrs)))
+        do (setf (row-major-aref arr i)
+                 (apply lam
+                        (mapcar
+                          (lambda (a)
+                            (row-major-aref a i))
+                          arrs))))
+      arr)
+    (error "Cannot map arrays with different dimensions")))
+
+(defmethod array-multiply (x y)
+  (cond ((and (not (arrayp x))
+              (not (arrayp y)))
+         `(* ,x ,y))
+        ((not (arrayp y))
+         (array-multiply y x))
+        ((mequal x 0) 0)
+        ((mequal x 1) y)
+        ((not (arrayp x))
+         (map-array
+           (lambda (e)
+             (cond ((or (mequal e 0) (mequal x 0)) 0)
+                   ((mequal e 1) x)
+                   ((mequal x 1) e)
+                   ((and (isfunc '* e) (isfunc '* x)) `(* ,@(cdr e) ,@(cdr x)))
+                   ((isfunc '* e) `(* ,@(cdr e) ,x))
+                   ((isfunc '* x) `(* ,@(cdr x) ,e))
+                   (t `(* ,x ,e))))
+           y))
+        ((or (> (array-rank x) 2)
+             (> (array-rank y) 2))
+         (error "Array multiplication for non-2D matrices is not implemented. Overload #'array-multiple to implement."))
+        ((and (equal (array-rank x) 2)
+              (equal (array-rank y) 2)
+              (not (cdr (remove-duplicates (append (array-dimensions x) (array-dimensions y))))))
+         (let ((dim (array-dimension x 0)))
+           (make-array `(,dim ,dim)
+             :initial-contents
+               (loop for j below dim collect
+                 (loop for i below dim collect
+                   `(+ ,@(loop for k below dim
+                           collect (let ((v1 (aref x j k))
+                                         (v2 (aref y k i)))
+                                     (cond ((and (isfunc '* v1) (isfunc '* v2)) `(* ,@(cdr v1) ,@(cdr v2)))
+                                           ((isfunc '* v1) `(* ,@(cdr v1) ,v2))
+                                           ((isfunc '* v2) `(* ,v1 ,@(cdr v2)))
+                                           (t `(* ,v1 ,v2)))))))))))
+        (t (error "The '*' operator can be used only for multiplication of vector/matrix to constant or to multiply square matrices. Overload #'array-multiply to extent it."))))
+
+
+(defmacro if-let (varexpr r1 &optional r2)
+  `(let ((,(car varexpr) ,(cadr varexpr)))
+     (if ,(car varexpr)
+         ,r1
+         ,r2)))
+
+(defun tick ())
+
+(defun boolp (e) (typep e 'boolean))
+
+(defun copy-expr (e)
+  (if (listp e)
+      (copy-list e)
+      e))
+
+(defun mintegerp (x)
+  (or (integerp x)
+      (and (numberp x)
+           (= (floor x) x))))
+
+(defun all-bins (n) ;; 3 => ((0 0 0) (1 0 0) (0 1 0) (1 1 0) (0 0 1) (1 0 1) (0 1 1) (1 1 1))
+  (if (> n 1)
+      (mapcan
+        (lambda (b)
+          (list (cons 0 b)
+                (cons 1 b)))
+        (all-bins (- n 1)))
+      `((0) (1))))
+
+(defun all-list-decs (l &key (min 1) (max (length l)))
+  (let ((ll (length l)))
+    (sort
+      (mapcar
+        (lambda (b)
+          (mapcar #'cdr
+            (remove-if (lambda (x) (= (car x) 0))
+                       (mapcar #'cons b l))))
+        (mapcar #'cdr
+          (remove-if-not
+            (lambda (x) (and (>= (car x) min)
+                             (<= (car x) max)))
+            (mapcar (lambda (x) (cons  (count 1 x) x))
+                    (all-bins ll)))))
+      #'>
+      :key #'length)))
+
+(defun sqr (x)
+  "Multiple argument by itself. Works for vectors too!"
+  (if (arrayp x)
+      (if (cdr (array-dimensions x))
+          (array-multiply x x)
+          `(+ ,@(map 'list (lambda (x) `(expt ,x 2)) x)))
+      `(expt ,x 2)))
+
+(defun math-rec-funcall (fn arg &optional deep)
+  "Call the function fn recursively"
+  (labels ((rfn (x)
+             (if (equal deep 0)
+                 x
+                 (math-rec-funcall fn x (if deep (- deep 1))))))
+    (apply #'values
+           (multiple-value-list
+             (funcall fn (cond
+                           ((listp arg)
+                            (let ((*last-expr-op* (car arg)))
+                              (cons (car arg) (mapcar #'rfn (cdr arg)))))
+                           ((arrayp arg)
+                            (map-array #'rfn arg))
+                           (t arg)))))))
+
+(defparameter *return-best-variant* nil) ;; If T, defun-stable-expr functions will return less weighted result. USE WITH CAUTION!
+
+(defmacro defun-stable-expr (name args &rest cod)
+  (let ((h (gensym))
+        (r (gensym))
+        (arg (gensym)))
+    `(defun ,name (,arg &optional ,h)
+       (let* ((,r (funcall (lambda ,args ,@cod) ,arg)))
+         (if (position ,r ,h :test #'equal-expr)
+             (if *return-best-variant*
+                 (caar (stable-sort (mapcar #'cons ,h (mapcar #'expr-weight ,h)) #'< :key #'cdr))
+                 ,r)
+             (,name ,r (cons ,r ,h)))))))
+
+(defmacro chain-func-rec (fl arg)
+  "Recursively call function chain"
+  (let ((rfl (reverse fl)))
+    (reduce (lambda (r x)
+              (if (listp x)
+                  `(math-rec-funcall #',(cadr x) ,r ,(car x))
+                  `(math-rec-funcall #',x ,r)))
+            (cdr rfl)
+            :initial-value (if (listp (car rfl))
+                               `(math-rec-funcall #',(cadr (car rfl)) ,arg ,(car (car rfl)))
+                               `(math-rec-funcall #',(car rfl) ,arg)))))
+
+(defmacro def-expr-cond (&rest margs)
+  "(expr-cond func-name expr-name :numberp cod :boolp cod :op (op cod) ... :defop cod)"
+  (let* ((func-name (car margs))
+         (e1 (cadr margs))
+         (expr-name e1)
+         (pars (loop for x on (cddr margs) by #'cddr collect (cons (car x) (cadr x))))
+         (ops (mapcar #'cdr (remove-if-not (lambda (x) (equal (car x) :op)) pars)))
+         (defop (cdar (remove-if-not (lambda (x) (equal (car x) :defop)) pars)))
+         (non-ops (remove-if-not (lambda (x)
+                                   (not (or (equal (car x) :op)
+                                            (equal (car x) :defop)))) pars)))
+     `(defun ,func-name ,(if (listp e1) e1 (list e1))
+        (tick)
+        (cond ,@(mapcar (lambda (x)
+                          `((,(intern (symbol-name (car x))) ,expr-name) ,(cdr x)))
+                        non-ops)
+              ,@(if (not (or (position :arrayp non-ops)
+                             (position :vectorp non-ops)))
+                    `(((arrayp ,expr-name)
+                       (map-array #',func-name ,expr-name))))
+              ((listp ,expr-name)
+               (cond
+                ,@(mapcar (lambda (x)
+                            (let ((op (car x))
+                                  (cod (cadr x)))
+                                `(,(if (listp op)
+                                      `(or ,@(mapcar (lambda (x)
+                                                       `(equal (car ,expr-name) ',x)) op))
+                                      `(equal (car ,expr-name) ',op))
+                                   ,cod)))
+                          ops)
+                ,@(if defop `((t ,defop)) `((t (error "Unknown op in ~A: ~A" ,func-name (car ,expr-name)))))))
+              (t (error (format nil "Unknown type in expression: ~A (~A)" (type-of ,expr-name) ,expr-name)))))))
+
+; (defun equal-expr (e1 e2)  ;; Just to suppress warnings about undefined function
+;   (declare (ignore e1 e2))
+;   (error "STUB"))
+
+(defun equal-args (l1 l2)
+  "Check if l1 and l2 are lists of the same expressions"
+  (and (equal (length l1) (length l2))
+       (labels ((e-a (l1 l2)
+                  (or (and (not l1) (not l2))
+                      (and (equal-expr (car l1) (car l2))
+                           (e-a (cdr l1) (cdr l2))))))
+         (e-a l1 l2))))
+
+(defparameter *equarg-uniq-sym* (gensym))
+
+(defun equal-arg-sets (l1 l2)
+  "Check if l1 and l2 are lists of the same sets of expressions"
+  (and (equal (length l1) (length l2))
+    (let* ((tl2 (copy-list l2)))
+      (map nil
+        (lambda (e)
+          (let ((pos (position e tl2 :test #'equal-expr)))
+            (if pos
+                (setf (elt tl2 pos) *equarg-uniq-sym*)
+                (return-from equal-arg-sets nil))))
+        l1)
+      (equal *equarg-uniq-sym* (car (remove-duplicates tl2))))))
+
+;; equal-expr and equal-expr-1 are not checks for true equality in math sense,
+;; expressions must have similar forms to be treated as equal.
+;; For example, exprs (+ a b c) and (+ a (+ b c)) will not be found as equal,
+;; but (+ a b c) and (+ b c a) will. The equal-expr-1 a bit more tricky, but
+;; also don't trust it too much.
+;; A better (but much slower) way to check exprs equality is:
+;;   (or (equal 1 (symplify '(/ e1 e2))) (equal 0 (symplify '(- e1 e2))))
+
+(defun equal-expr (e1 e2)
+  "Check if e1 and e2 a the same exprs"
+  (or (tree-equal e1 e2) ;; Quick result if we are lucky
+      (mequal e1 e2)
+      (and (equal (type-of e1) (type-of e2))
+           (cond ((symbolp e1) (and (equal (symbol-name e1) (symbol-name e2)) ;; It is possible to have different symbols like with same names!
+                                    (equal (symbol-package e1) (symbol-package e2))))
+                 ((listp e1) (and (equal (car e1) (car e2))
+                                  (and (= (length e1) (length e2))
+                                       (if (or (equal (car e1) '*) (equal (car e1) '+))
+                                           (equal-arg-sets (cdr e1) (cdr e2))
+                                           (if (or (equal (car e1) '/) (equal (car e1) '-))
+                                               (and (equal-expr (cadr e1) (cadr e2))
+                                                    (equal-arg-sets (cddr e1) (cddr e2)))
+                                               (equal-args (cdr e1) (cdr e2)))))))
+                 ((arrayp e1)
+                  (and (equal (array-dimensions e1) (array-dimensions e2))
+                       (loop for i below (apply #'* (array-dimensions e1))
+                             when (not (equal-expr (row-major-aref e1 i) (row-major-aref e2 i))) return nil
+                             finally (return t))))
+                 (t nil)))))
+
+(defun equal-expr-1 (e1 e2)
+  "Check if e1 is -e2"
+  (or (and (numberp e1)
+           (numberp e2)
+           (= e1 (* -1 e2)))
+      (or (and (listp e1) (listp e2)
+               (equal (car e1) (car e2))
+               (equal (length e1) (length e2))
+               (equal (car e1) '+)
+               (labels ((eq-sum (l1 l2)
+                          (or (not l1)
+                              (let ((pos (position (car l1) l2 :test #'equal-expr-1)))
+                                (and pos
+                                     (eq-sum (cdr l1)
+                                             (append (subseq l2 0 pos)
+                                                     (subseq l2 (+ pos 1)))))))))
+                 (eq-sum (cdr e1) (cdr e2))))
+          (and (or (isfunc '- e1) (isfunc '- e2))
+               (multiple-value-bind (me oe) (if (isfunc '- e1)
+                                                (values e1 e2)
+                                                (values e2 e1))
+                 (or (and (= 3 (length oe))
+                          (and (isfunc '- oe)  ;; a-b = b-a ; a-b-c-d = (b+c+d)-a
+                               (equal-expr (caddr oe) (cadr me))
+                               (or (and (= 3 (length me))
+                                        (equal-expr (cadr oe) (caddr me)))
+                                   (equal-expr (cons '+ (cddr me))
+                                               (cadr oe)))))
+                     (and (isfunc '+ oe) ;; a-b-c-d=b+c+d-a
+                          (let ((pos (position-if (lambda (e)
+                                                    (equal-expr-1 e (cadr me)))
+                                                  oe)))
+                            (and pos
+                                 (equal-arg-sets (cddr me)
+                                                 `(,@(subseq oe 1 pos)
+                                                   ,@(subseq oe (+ pos 1))))))))))
+          (and (or (isfunc '* e1) (isfunc '* e2) (isfunc '/ e1) (isfunc '/ e2))
+               (multiple-value-bind (me oe) (if (or (isfunc '* e1) (isfunc '/ e1))
+                                                (values e1 e2)
+                                                (values e2 e1))
+                 (labels ((get-n-nn (e)
+                            (values (apply #'* (remove-if-not #'numberp (cdr e)))
+                                    (remove-if #'numberp (cdr e))))
+                          (count-pm (l1 l2 &key (nm 0))
+                            (if (and l1 l2)
+                                (if-let (pos (position (car l1) l2 :test #'equal-expr))
+                                  (count-pm (cdr l1)
+                                            (append (subseq l2 0 pos) (subseq l2 (+ pos 1)))
+                                            :nm nm)
+                                  (if-let (pos (position (car l1) l2 :test #'equal-expr-1))
+                                    (count-pm (cdr l1)
+                                              (append (subseq l2 0 pos) (subseq l2 (+ pos 1)))
+                                              :nm (+ nm 1))
+                                    0))
+                                (if (or (and l1 (mequal (car l1) -1))
+                                        (and l2 (mequal (car l2) -1)))
+                                    (+ nm 1)
+                                    (if (and (not l1) (not l2))
+                                        nm
+                                        0)))))
+                    (multiple-value-bind (mn mnn) (get-n-nn me)
+                      (or (and (or (isfunc '* oe) (isfunc '/ oe))
+                               (multiple-value-bind (on onn) (get-n-nn oe)
+                                 (oddp (count-pm (cons mn mnn) (cons on onn)))))
+                          (and (not (cdr mnn))
+                               (or (and (= mn -1)
+                                        (equal-expr (car mnn) oe))
+                                   (and (= mn 1)
+                                        (equal-expr-1 (car mnn) oe))))))))))))
+
+(defun expr-weight (e &key (weight 0) max-weight)
+  "Calculate a difficulty to calculate the expression e. If the weight exceeds max-weight, don't calculate more."
+  (if (and max-weight (> weight max-weight))
+      (return-from expr-weight weight))
+  (if (listp e)
+      (+ (apply #'+ (mapcar #'expr-weight (cdr e)))
+         (* (length (cdr e))
+            (case (car e)
+                  ((+ -) 1)
+                  (abs 2)
+                  (cast 3) ;; cast type, like integer -> float, etc
+                  (* 4)
+                  (exp 50)
+                  (/ 30)
+                  ((sqrt expt) 100)
+                  ((sin cos tan) 60)
+                  ((asin acos atan) 80)
+                  (otherwise 200))))
+      (if (arrayp e)
+          (loop for i below (apply #'* (array-dimensions e))
+                sum (row-major-aref e i) into s
+                when (> (+ s weight) max-weight) return s
+                finally (return s))
+          0.1)))
+
+(defmacro defun-stable-expr (name args &rest cod)
+  "Define the function of one argument, which will call itself with its result as a argument, until already a seen result will be returned"
+  (let ((h (gensym))
+        (r (gensym))
+        (arg (gensym)))
+    `(defun ,name (,arg &optional ,h)
+       (let* ((,r (funcall (lambda ,args ,@cod) ,arg)))
+         (if (position ,r ,h :test #'equal-expr)
+             ,r ; (caar (stable-sort (mapcar #'cons ,h (mapcar #'expr-eqight ,h)) #'< :key #'cdr))
+             (,name ,r (cons ,r ,h)))))))
+
+(defun collect-exprs (e)
+  "Collecting * and + expressions: (+ a (+ b c)) => (+ a b c)"
+  (if (listp e)
+      (if (position (car e) '(+ *))
+          (cons (car e)
+                (mapcan
+                  (lambda (e1)
+                    (if (listp e1)
+                        (if (equal (car e) (car e1))
+                            (cdr e1)
+                            (list e1))
+                        (list e1)))
+                  (copy-list (cdr e))))
+          e)
+      e))
+
+(def-expr-cond extract-nums e ;; Compute everything where it is possible
+  :numberp e
+  :symbolp e
+  :boolp e
+  :op ((+ *)
+       (let* ((op (car e))
+              (args (cdr e))
+              (num (apply (symbol-function op) (remove-if-not #'numberp args)))
+              (not-nums (remove-if #'numberp args)))
+         (if not-nums
+             (if (equal op '*)
+                 (cond ((mequal num 0)
+                        0)
+                       ((mequal num 1)
+                        (if (cdr not-nums)
+                            (cons op not-nums)
+                            (car not-nums)))
+                       (t `(,op ,num ,@not-nums)))
+                 (if (mequal num 0)
+                     (if (cdr not-nums)
+                         (cons op not-nums)
+                         (car not-nums))
+                     `(,op ,num ,@not-nums)))
+             num)))
+  :op (expt (if (or (mequal 0 (cadr e))
+                    (mequal 1 (cadr e)))
+                (cadr e)
+                (if (numberp (caddr e))
+                    (cond ((= (caddr e) 0) 1)
+                          ((= (caddr e) 1) (cadr e))
+                          ((numberp (cadr e)) (expt (cadr e) (caddr e)))
+                          (t e))
+                    e)))
+  :op (cast (if (numberp (caddr e))
+                (cond
+                  ((equal 'real*8 (cadr e)) (float (caddr e)))
+                  ((equal 'real*4 (cadr e)) (float (caddr e)))
+                  ((equal 'integer (cadr e))
+                   (multiple-value-bind (f r) (floor (caddr e))
+                     (if (= 0.0 r) f e)))
+                  (t e))
+                e))
+  :defop (if (not (remove-if #'numberp (cdr e)))
+             (apply (car e) (cdr e))
+             e))
+
+(def-expr-cond norm-expr e ;; Convert every / and - to * and +, sqrt to (expt x 1/2)
+  :numberp e
+  :symbolp e
+  :boolp e
+  :op (- (if (= (length e) 2)
+            `(* -1 ,(cadr e))
+            `(+ ,(cadr e)
+                 (* -1 ,(if (= (length e) 3)
+                            (caddr e)
+                           `(+ ,@(cddr e)))))))
+  :op (/ `(* ,(cadr e) (expt ,(if (= (length e) 3)
+                                  (caddr e)
+                                 `(* ,@(cddr e)))
+                             -1)))
+  :op (sqrt `(expt ,(cadr e) 1/2))
+  :op (expt (if (and (arrayp (cadr e))
+                     (numberp (caddr e))
+                     (evenp (caddr e))
+                     (equal 1 (array-rank (cadr e))))
+                (cond ((equal (caddr e) 0)
+                       1)
+                      (t `(expt ,(sqr (cadr e)) (/ (caddr e) 2))))
+                e))
+  :defop e)
+
+(def-expr-cond denorm-expr-expt e ;; The reverse of norm-expr for / and expt
+  :numberp e
+  :symbolp e
+  :boolp e
+  :op (* (labels ((dvp (x)
+                    (and (listp x)
+                         (equal (length x) 3)
+                         (equal (car x) '/)
+                         (mequal (cadr x) 1))))
+           (let* ((divs (remove-if-not #'dvp (cdr e)))
+                  (ndivs (remove-if #'dvp (cdr e)))
+                  (dvop (if divs
+                            (if (cdr divs)
+                                `(/ 1 (* ,@(mapcar #'caddr divs)))
+                                (car divs))))
+                  (ndvop (if ndivs
+                             (if (cdr ndivs)
+                                 `(* ,@ndivs)
+                                 (car ndivs)))))
+             (if divs
+                 (if ndivs
+                     `(/ ,ndvop ,(caddr dvop))
+                     dvop)
+                 e))))
+  :op (expt (if (numberp (caddr e))
+                (cond ((= (caddr e) 1/2)
+                       `(sqrt ,(cadr e)))
+                      ((= (caddr e) 1)
+                       (cadr e))
+                      ((= (caddr e) 0)
+                       1)
+                      ((< (caddr e) 0)
+                       `(/ 1 ,(if (mequal (caddr e) -1)
+                                  (cadr e)
+                                  `(expt ,(cadr e) ,(* -1 (caddr e))))))
+
+                      (t e))
+                e))
+  :defop e)
+
+(def-expr-cond denorm-expr-zop e ;; Replace every (* x) and (+ x) to x
+  :numberp e
+  :symbolp e
+  :boolp e
+  :defop e
+  :op ((+ *) (if (cddr e)
+                 e
+                 (cadr e))))
+
+(def-expr-cond denorm-expr-minus e ;; Convert (+ ... (* -1 ....) ...)  to (- ...)
+  :numberp e
+  :symbolp e
+  :boolp e
+  :defop e
+  :op (+ (labels ((isneg (x)
+                    (and (isfunc '* x)
+                         (cddr x)
+                         (find-if #'minusp (remove-if-not #'numberp (cdr x)))))
+                  (deneg (l)
+                    (if l
+                        (if (minusp (car l))
+                            (if (mequal (car l) -1)
+                                (cdr l)
+                                (cons (* -1 (car l)) (cdr l)))
+                            (cons (car l) (deneg (cdr l)))))))
+           (let* ((negs (remove-if-not #'isneg (cdr e)))
+                  (poss (remove-if #'isneg (cdr e)))
+                  (pnegs (mapcar
+                           (lambda (x)
+                             (let ((dn (deneg (cdr x))))
+                               (if (cdr dn)
+                                 `(* ,@dn)
+                                 (car dn))))
+                           negs)))
+             (if negs
+                 (if poss
+                     `(- ,(if (cdr poss)
+                              `(+ ,@poss)
+                              (car poss))
+                         ,@pnegs)
+                     `(* -1 (+ ,@pnegs)))
+                 e)))))
+
+(def-expr-cond denorm-expr-minus1 e ;; (+ -5 x) => (- x 5)
+  :numberp e
+  :symbolp e
+  :boolp e
+  :defop e
+  :op (+ (if (and (numberp (cadr e))
+                  (< (cadr e) 0))
+            `(- ,(if (cdddr e)
+                     `(+ ,@(cddr e))
+                     (caddr e))
+                ,(* -1 (cadr e)))
+             e)))
+
+(def-expr-cond denorm-expr-plus-n e ;; Move numbers to the end of (+ ...)
+  :numberp e
+  :symbolp e
+  :boolp e
+  :defop e
+  :op (+ (if (and (numberp (cadr e))
+                  (cddr e))
+             `(+ ,@(cddr e) ,(cadr e))
+              e)))
+
+(defun denorm-expr (e)
+  (chain-func-rec
+    (denorm-expr-expt
+     denorm-expr-plus-n
+     denorm-expr-zop
+     denorm-expr-minus1
+     denorm-expr-minus)
+    e))
+
+(def-expr-cond expand-expt1 e ;; (expt (* a ...) n) => (* (expt a n) ...)
+  :numberp e
+  :boolp e
+  :symbolp e
+  :defop e
+  :op (expt (if (isfunc '* (cadr e))
+                (cons '* (mapcar
+                           (lambda (x)
+                             `(expt ,x ,(caddr e)))
+                           (cdr (cadr e))))
+                e)))
+
+(def-expr-cond expand-expt2 e ;; (expt x (+ n1 ...)) => (* (expt x n) ...)
+  :numberp e
+  :boolp e
+  :symbolp e
+  :defop e
+  :op (expt (if (isfunc '+ (caddr e))
+                (cons '* (mapcar
+                           (lambda (x)
+                             `(expt ,(cadr e) ,x))
+                           (cdr (caddr e))))
+                e)))
+
+(def-expr-cond collect-expt e ;; Reverse of expand-expt*
+  :numberp e
+  :boolp e
+  :symbolp e
+  :defop e
+  :op (* (if (cddr e)
+           (let ((args (list))
+                 (cf 1))
+             (labels ((process-arg (e)
+                        (let ((e1 (if (isfunc 'expt e) (cadr e) e))
+                              (d (if (isfunc 'expt e) (caddr e) 1)))
+                          (if-let (r (assoc e1 args :test #'equal-expr))
+                            (setf (cdr r) `(+ ,(cdr r) ,d))
+                            (if-let (r (assoc e1 args :test #'equal-expr-1))
+                              (progn
+                                (setf (cdr r) `(+ ,(cdr r) ,d))
+                                (setf cf (* cf -1)))
+                              (push (cons e1 d) args))))))
+               (map nil #'process-arg (cdr e))
+               (let ((arg2 `(,@(if (= cf 1) nil (list cf))
+                             ,@(mapcar
+                                 (lambda (x)
+                                   (if (mequal (cdr x) 1) (car x) `(expt ,(car x) ,(cdr x))))
+                                 args))))
+                 (if (cdr arg2)
+                     `(* ,@arg2)
+                     (car arg2)))))
+           e))
+  :op (expt (cond ((isfunc 'expt (cadr e))
+                   `(expt ,(cadadr e) (* ,(caddr e) ,(car (cddadr e)))))
+                  ((isfunc '* (cadr e))
+                   `(* ,@(mapcar (lambda (x)
+                                   (if (isfunc 'expt x)
+                                      `(expt ,(cadr x) (* ,(caddr e) ,(caddr x)))
+                                      `(expt ,x ,(caddr e))))
+                                 (cdadr e))))
+                  (t e))))
+
+(def-expr-cond expand-mul e ;; (* (+ ...) (+ ...)) => (+ (* ...) (* ...))
+  :numberp e
+  :boolp e
+  :symbolp e
+  :defop e
+  :op (* (let* ((args (cdr e))
+                (plus (mapcar #'cdr (filter-func '+ args)))
+                (notplus (filter-func '+ args t)))
+           (labels ((comb (ls)
+                      (if (cadr ls)
+                          (mapcan
+                            (lambda (r)
+                              (mapcar
+                                (lambda (x)
+                                  (cons x r))
+                                (car ls)))
+                            (comb (cdr ls)))
+                          (copy-list (mapcar #'list (car ls))))))
+             (if plus
+                 (cons '+ (mapcan
+                            (lambda (x)
+                              (let ((res (if (cdr x)
+                                             (extract-nums (collect-expt `(* ,@x)))
+                                             x)))
+                                (if (mequal 0 res)
+                                    nil
+                                    (list res))))
+                            (copy-list
+                              (mapcar
+                                (lambda (x)
+                                  `(,@notplus ,@x))
+                                (comb plus)))))
+                 e)))))
+
+(def-expr-cond collect-common-nums e ;; (+ (* 2 x) (* 4 y)) => (* 2 (+ x (* 2 y)))
+  :numberp e
+  :boolp e
+  :symbolp e
+  :defop e
+  :op (+ (let* ((nums (mapcar
+                        (lambda (x)
+                          (if (numberp x)
+                              x
+                              (if (and (isfunc '* x)
+                                       (numberp (cadr x)))
+                                  (cadr x)
+                                  1)))
+                        (cdr e))))
+           (if (not (every #'mintegerp nums))
+             e
+             (let* ((mcnt (length (remove-if-not #'minusp nums)))
+                    (pcnt (- (length nums) mcnt))
+                    (g (apply #'gcd (mapcar #'truncate nums)))
+                    (g1 (* g (if (> mcnt pcnt) -1 1))))
+               (if (> g 1)
+                   `(* ,g1 (+ ,@(mapcar
+                                  (lambda (x)
+                                    (if (numberp x)
+                                        (/ x g1)
+                                        (if (and (isfunc '* x)
+                                                 (numberp (cadr x)))
+                                           (if (mequal (cadr x) g1)
+                                             (if (cdddr x)
+                                               `(* ,@(cddr x))
+                                                (caddr x))
+                                             `(* ,(/ (cadr x) g1) ,@(cddr x)))
+                                           (error "Internal error!!!"))))
+                                  (cdr e))))
+                   e))))))
+
+(defun collect-one-common (e) ;; extract one most common expression from e. Don't ever try to improve, if not understand it completely.
+  (labels ((eqf (e1 e2)
+             (or (equal-expr e1 e2)
+                 (equal-expr-1 e1 e2)
+                 (and (isfunc 'expt e2)
+                      (or (equal-expr e1 (cadr e2))
+                          (equal-expr-1 e1 (cadr e2))))
+                 (and (isfunc 'expt e1)
+                      (or (equal-expr e2 (cadr e1))
+                          (equal-expr-1 e2 (cadr e1))))
+                 (and (isfunc 'expt e1)
+                      (isfunc 'expt e2)
+                      (or (equal-expr (cadr e1) (cadr e2))
+                          (equal-expr-1 (cadr e1) (cadr e2)))))))
+    (if (isfunc '+ e)
+      (let ((e (math-rec-funcall #'collect-exprs e))
+            (ecnt-l nil))
+        (labels
+          ((equal-expr-2 (e1 e2)
+             (or (equal-expr e1 e2)
+                 (equal-expr-1 e1 e2)))
+           (count-expr (e1 nt)
+             (if (not (numberp e1))
+               (labels ((inc-hash-test (e)
+                          (if (not (numberp e))
+                              (if-let (vk (rassoc e ecnt-l :test #'eqf))
+                                      (pushnew nt (car vk))
+                                      (push (cons (list nt) e) ecnt-l)))))
+                 (map nil
+                   (lambda (e2)
+                     (if (isfunc 'expt e2)
+                         (inc-hash-test (cadr e2))
+                         (inc-hash-test e2)))
+                   (if (isfunc '* e1)
+                       (cons e1 (cdr e1))
+                       (list e1)))))))
+          (map nil
+               #'count-expr
+               (cdr e)
+               (loop for i below (length (cdr e)) collect i))
+          (let* ((mxc (apply #'max (mapcar (lambda (x) (length (car x))) ecnt-l)))
+                 (subexs (if (= mxc 1)
+                             (mapcar
+                               (lambda (x)
+                                 (cons '+ x))
+                               (all-list-decs (cdr e) :min 2 :max (length (cddr e)))))))
+            (if (= mxc 1)
+                (map nil
+                     #'count-expr
+                     subexs
+                     (loop for i below (length subexs) collect (+ i (length (cdr e))))))
+            (if (> (apply #'max (mapcar (lambda (x) (length (car x))) ecnt-l)) 1)
+              (let* ((ee (cdr (car (stable-sort (reverse ecnt-l) #'> :key (lambda (x) (length (car x)))))))
+                     (ee (if (isfunc 'expt ee)
+                             (cadr ee)
+                             ee))
+                     (see (find ee subexs :test #'equal-expr-2))
+                     (es (if see
+                             (labels ((rmse (le ls)
+                                        (if le
+                                          (let ((pos (position (car le) ls :test #'equal-expr)))
+                                            (if pos
+                                                (rmse (cdr le) `(,@(subseq ls 0 pos) ,@(subseq ls (+ pos 1))))
+                                                (cons (car le) (rmse (cdr le) ls)))))))
+                               `(+ ,see ,@(rmse (cdr e) (cdr see))))
+                             e))
+                     (ee-args nil)
+                     (nee-args nil))
+                (labels ((get-deg (x &key in-mul)
+                           (cond ((equal-expr ee x)
+                                  (list 1 1))
+                                 ((equal-expr-1 ee x)
+                                  (list 1 -1))
+                                 ((and (isfunc 'expt x)
+                                       (equal-expr ee (cadr x)))
+                                  (list (caddr x) 1))
+                                 ((and (isfunc 'expt x)
+                                       (equal-expr-1 (cadr x) ee))
+                                  (list (caddr x) `(expt -1 ,(caddr x))))
+                                 ((and (not in-mul)
+                                       (isfunc '* x))
+                                  (map nil
+                                    (lambda (x1)
+                                      (if-let (res (get-deg x1 :in-mul t))
+                                        (return-from get-deg res)))
+                                    (cdr x))))))
+                  (map nil
+                    (lambda (x)
+                      (if-let (dg (get-deg x))
+                        (push (cons dg x) ee-args)
+                        (push x nee-args)))
+                    (cdr es)))
+                (let* ((degs (remove-duplicates (mapcar #'caar ee-args) :test #'equal-expr))
+                       (ee-deg (if (every #'numberp degs)
+                                   (apply #'min degs)
+                                   (if (cdr degs)
+                                       1
+                                       (car degs))))
+                       (ree (if (equal ee-deg 1)
+                                ee
+                                `(expt ,ee ,ee-deg)))
+                       (ree-arg `(* ,ree
+                                    ,(let ((eargs (mapcar
+                                                    (lambda (de)
+                                                      (let ((dg (caar de))
+                                                            (ml (cadr (car de)))
+                                                            (ex (cdr de)))
+                                                        (cond
+                                                          ((and (mequal dg ee-deg)
+                                                                (equal-expr-2 ex ee))
+                                                           ml)
+                                                          ((and (isfunc 'expt ex)
+                                                                (equal-expr-2 (cadr ex) ee))
+                                                           `(* ,ml (expt ,(cadr ex) (- ,(caddr ex) ,ee-deg))))
+                                                          ((isfunc '* ex)
+                                                           (labels ((rpe (exl)
+                                                                      (if exl
+                                                                          (let ((ex2 (car exl)))
+                                                                            (if (eqf ex2 ee)
+                                                                              (cond ((mequal dg ee-deg)
+                                                                                     (cons ml (cdr exl)))
+                                                                                    ((isfunc 'expt ex2)
+                                                                                     (cons
+                                                                                       `(* ,ml (expt ,(cadr ex2) (- ,(caddr ex2) ,ee-deg)))
+                                                                                       (cdr exl)))
+                                                                                    (t (cons
+                                                                                         `(* ,ml (expt ,ex2 (- ,dg ,ee-deg)))
+                                                                                         (cdr exl))))
+                                                                              (cons ex2 (rpe (cdr exl)))))
+                                                                          (error (format nil "Internal error: common term not found!")))))
+                                                             (cons '* (rpe (cdr ex)))))
+                                                          (t (error "Internal error: cannot find expr to collect")))))
+                                                    ee-args)))
+                                       (if (cdr eargs)
+                                         (cons '+ eargs)
+                                         (car eargs))))))
+                  (values
+                    (if nee-args
+                        `(+ ,ree-arg ,@nee-args)
+                        ree-arg)
+                    t)))
+              (values e nil)))))
+      (values e nil))))
+
+(defun collect-common (e) ;; collect all comvon subexprs
+  (labels ((cocr (e &optional fnd)
+             (multiple-value-bind (e1 r) (collect-one-common (copy-expr e))
+               (if r
+                   (labels ((cocrt (e2)
+                              (if (equal-expr e e2)
+                                  (error "Internal error: deadly recursion in collect-common"))
+                              (cocr e2 t)))
+                     (chain-func-rec
+                       (cocrt
+                        collect-common-nums
+                        extract-nums)
+                       e1))
+                   (values e fnd)))))
+    (if (isfunc '+ e)
+        (cocr e)
+        e)))
+
+(def-expr-cond calc-arrays e
+   :numberp e
+   :boolp e
+   :symbolp e
+   :defop e
+   :op ((+ -) (if (some #'arrayp (cdr e))
+                  (let* ((zar (make-array (array-dimensions (find-if #'arrayp (cdr e)))
+                                          :initial-element 0))
+                         (me (mapcar
+                               (lambda (x)
+                                 (if (mequal x 0)
+                                     zar
+                                     x))
+                               (cdr e))))
+                    (if (equal-dimsp me)
+                        (apply #'map-array
+                          (cons (lambda (&rest els)
+                                  `(,(car e) ,@els))
+                                me))
+                        (error "Cannot mix elements with different ranks in +/-")))
+                  e))
+   :op (* (let ((arrs (remove-if-not #'arrayp (cdr e)))
+                (not-arrs (remove-if #'arrayp (cdr e))))
+            (if arrs
+                (reduce
+                  #'array-multiply
+                  (cdr arrs)
+                  :initial-value (if not-arrs
+                                     (array-multiply (if (cdr not-arrs)
+                                                         `(* ,@not-arrs)
+                                                          (car not-arrs))
+                                                     (car arrs))
+                                     1))
+                e)))
+   :op (/ (calc-arrays `(* ,(cadr e) (expt ,(if (cdddr e)
+                                                `(* ,@(cddr e))
+                                                (caddr e))
+                                           -1))))
+   :op (expt (if (arrayp (caddr e))
+                 (error "Array cannot be an exponent, sorry")
+                 (if (arrayp (cadr e))
+                     (let ((ar (cadr e))
+                           (ex (caddr e)))
+                       (if (and (numberp ex)
+                                (integerp ex)
+                                (>= ex 0))
+                           (cond ((mequal ex 0) 1)
+                                 ((mequal ex 1) ar)
+                                 (t (if (cdr (array-dimensions ar))
+                                        (reduce
+                                          #'array-multiply
+                                          (loop repeat (- ex 1) collect ar)
+                                          :initial-value ar)
+                                        (if (evenp ex)
+                                            `(+ ,@(loop for i across ar collect `(expt ,i ,ex)))
+                                            (array-multiply `(+ ,@(loop for i across ar collect `(expt ,i ,(- ex 1)))) ar)))))
+                           (error "(expt array e): e must be integer >= 0")))
+                     e)))
+   :op (vector (make-array (list (length (cdr e)))
+                 :initial-contents (cdr e)))
+   :op (aref (apply #'aref (cdr e)))
+   :op (sqr (sqr (cadr e))))
+
+(def-expr-cond collect-same-expts e ;; (* (expt x 2) (expt y 2)) => (expt (* x y) 2)
+   :numberp e
+   :boolp e
+   :symbolp e
+   :defop e
+   :op (* (labels ((is-expt (x) (isfunc 'expt x))
+                   (is-the-expt (ex) (lambda (e) (equal-expr (caddr e) ex))))
+            (let* ((expts (remove-if-not #'is-expt (cdr e)))
+                   (non-expts (remove-if #'is-expt (cdr e)))
+                   (expt-exs (remove-duplicates (mapcar #'caddr expts) :test #'equal-expr)))
+              (if (and (cdr expts)
+                       (< (length expt-exs) (length expts)))
+                  (let ((expt-terms (mapcar
+                                      (lambda (ex)
+                                        (let ((expts-ex (remove-if-not (is-the-expt ex) expts)))
+                                          `(expt ,(if (cdr expts-ex)
+                                                      `(* ,@(mapcar #'cadr expts-ex))
+                                                      (cadr (car expts-ex)))
+                                                 ,ex)))
+                                      expt-exs)))
+                    (if non-expts
+                        `(* ,@non-expts ,@expt-terms)
+                        (if (cdr expt-terms)
+                            `(* ,@expt-terms)
+                            (car expt-terms))))
+                  e)))))
+
+(defun-stable-expr simplify-expr3 (e) ;; Simplify normalized expression
+  (chain-func-rec
+    (extract-nums
+     collect-same-expts
+     extract-nums
+     collect-common-nums
+     collect-exprs
+     collect-common
+     extract-nums
+     collect-exprs
+     collect-expt
+     expand-mul
+     extract-nums
+     collect-exprs
+     collect-expt
+     collect-exprs
+     extract-nums
+     expand-expt2
+     expand-expt1
+     extract-nums
+     collect-exprs)
+    e))
+
+(defparameter *simplify-cache* (list))
+
+(defun clear-simplify-cache ()
+  (setf *simplify-cache* (list)))
+
+(defun simplify-expr2 (e) ;; normalize -> simplify -> denormalize
+  (if-let (r (assoc e *simplify-cache* :test #'equal-expr))
+    r
+    (let ((res (math-rec-funcall #'denorm-expr
+                 (simplify-expr3 (math-rec-funcall #'norm-expr  e)))))
+      (push (cons e res) *simplify-cache*)
+      res)))
+
+(defun simplify (e)
+  (let ((e1 (math-rec-funcall #'calc-arrays e)))
+    (if (arrayp e1)
+        (map-array #'simplify-expr2 e1)
+        (simplify-expr2 e1))))
