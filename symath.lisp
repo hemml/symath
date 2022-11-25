@@ -85,7 +85,7 @@
                                            ((isfunc '* v1) `(* ,@(cdr v1) ,v2))
                                            ((isfunc '* v2) `(* ,v1 ,@(cdr v2)))
                                            (t `(* ,v1 ,v2)))))))))))
-        (t (error "The '*' operator can be used only for multiplication of vector/matrix to constant or to multiply square matrices. Overload #'array-multiply to extent it."))))
+        (t (error "The '*' operator can be used only for multiplication of vector/matrix to constant or to multiply square matrices. Overload #'array-multiply to extend it."))))
 
 
 (defmacro if-let (varexpr r1 &optional r2)
