@@ -459,8 +459,7 @@
                 (cond ((equal (caddr e) 0)
                        1)
                       (t `(expt ,(sqr (cadr e)) (/ (caddr e) 2))))
-                e))
-  :defop e)
+                e)))
 
 (def-expr-cond denorm-expr-expt e ;; The reverse of norm-expr for / and expt
   :op (* (labels ((dvp (x)
