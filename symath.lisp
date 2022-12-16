@@ -214,8 +214,8 @@
                                       `(equal (car ,expr-name) ',op))
                                    ,cod)))
                           ops)
-                ,@(if defop `((t ,defop)) `((t (error "Unknown op in ~A: ~A" ,func-name (car ,expr-name)))))))
-              (t (error (format nil "Unknown type in expression: ~A (~A)" (type-of ,expr-name) ,expr-name)))))))
+                ,@(if defop `((t ,defop)) `((t ,expr-name)))))
+              (t ,expr-name)))))
 
 ; (defun equal-expr (e1 e2)  ;; Just to suppress warnings about undefined function
 ;   (declare (ignore e1 e2))
@@ -398,9 +398,6 @@
       e))
 
 (def-expr-cond extract-nums e ;; Compute everything where it is possible
-  :numberp e
-  :symbolp e
-  :boolp e
   :op ((+ *)
        (let* ((op (car e))
               (args (cdr e))
@@ -444,9 +441,6 @@
              e))
 
 (def-expr-cond norm-expr e ;; Convert every / and - to * and +, sqrt to (expt x 1/2)
-  :numberp e
-  :symbolp e
-  :boolp e
   :op (- (if (= (length e) 2)
             `(* -1 ,(cadr e))
             `(+ ,(cadr e)
@@ -469,9 +463,6 @@
   :defop e)
 
 (def-expr-cond denorm-expr-expt e ;; The reverse of norm-expr for / and expt
-  :numberp e
-  :symbolp e
-  :boolp e
   :op (* (labels ((dvp (x)
                     (and (listp x)
                          (equal (length x) 3)
@@ -505,23 +496,14 @@
                                   `(expt ,(cadr e) ,(* -1 (caddr e))))))
 
                       (t e))
-                e))
-  :defop e)
+                e)))
 
 (def-expr-cond denorm-expr-zop e ;; Replace every (* x) and (+ x) to x
-  :numberp e
-  :symbolp e
-  :boolp e
-  :defop e
   :op ((+ *) (if (cddr e)
                  e
                  (cadr e))))
 
 (def-expr-cond denorm-expr-minus e ;; Convert (+ ... (* -1 ....) ...)  to (- ...)
-  :numberp e
-  :symbolp e
-  :boolp e
-  :defop e
   :op (+ (labels ((isneg (x)
                     (and (isfunc '* x)
                          (cddr x)
@@ -552,10 +534,6 @@
                  e)))))
 
 (def-expr-cond denorm-expr-minus1 e ;; (+ -5 x) => (- x 5)
-  :numberp e
-  :symbolp e
-  :boolp e
-  :defop e
   :op (+ (if (and (numberp (cadr e))
                   (< (cadr e) 0))
             `(- ,(if (cdddr e)
@@ -565,10 +543,6 @@
              e)))
 
 (def-expr-cond denorm-expr-plus-n e ;; Move numbers to the end of (+ ...)
-  :numberp e
-  :symbolp e
-  :boolp e
-  :defop e
   :op (+ (if (and (numberp (cadr e))
                   (cddr e))
              `(+ ,@(cddr e) ,(cadr e))
@@ -584,10 +558,6 @@
     e))
 
 (def-expr-cond expand-expt1 e ;; (expt (* a ...) n) => (* (expt a n) ...)
-  :numberp e
-  :boolp e
-  :symbolp e
-  :defop e
   :op (expt (if (isfunc '* (cadr e))
                 (cons '* (mapcar
                            (lambda (x)
@@ -596,10 +566,6 @@
                 e)))
 
 (def-expr-cond expand-expt2 e ;; (expt x (+ n1 ...)) => (* (expt x n) ...)
-  :numberp e
-  :boolp e
-  :symbolp e
-  :defop e
   :op (expt (if (isfunc '+ (caddr e))
                 (cons '* (mapcar
                            (lambda (x)
@@ -608,10 +574,6 @@
                 e)))
 
 (def-expr-cond collect-expt e ;; Reverse of expand-expt*
-  :numberp e
-  :boolp e
-  :symbolp e
-  :defop e
   :op (* (if (cddr e)
            (let ((args (list))
                  (cf 1))
@@ -646,10 +608,6 @@
                   (t e))))
 
 (def-expr-cond expand-mul e ;; (* (+ ...) (+ ...)) => (+ (* ...) (* ...))
-  :numberp e
-  :boolp e
-  :symbolp e
-  :defop e
   :op (* (let* ((args (cdr e))
                 (plus (mapcar #'cdr (filter-func '+ args)))
                 (notplus (filter-func '+ args t)))
@@ -680,10 +638,6 @@
                  e)))))
 
 (def-expr-cond collect-common-nums e ;; (+ (* 2 x) (* 4 y)) => (* 2 (+ x (* 2 y)))
-  :numberp e
-  :boolp e
-  :symbolp e
-  :defop e
   :op (+ (let* ((nums (mapcar
                         (lambda (x)
                           (if (numberp x)
@@ -878,10 +832,6 @@
         e)))
 
 (def-expr-cond calc-arrays e
-   :numberp e
-   :boolp e
-   :symbolp e
-   :defop e
    :op ((+ -) (if (some #'arrayp (cdr e))
                   (let* ((zar (make-array (array-dimensions (find-if #'arrayp (cdr e)))
                                           :initial-element 0))
@@ -941,10 +891,6 @@
    :op (sqr (sqr (cadr e))))
 
 (def-expr-cond collect-same-expts e ;; (* (expt x 2) (expt y 2)) => (expt (* x y) 2)
-   :numberp e
-   :boolp e
-   :symbolp e
-   :defop e
    :op (* (labels ((is-expt (x) (isfunc 'expt x))
                    (is-the-expt (ex) (lambda (e) (equal-expr (caddr e) ex))))
             (let* ((expts (remove-if-not #'is-expt (cdr e)))
