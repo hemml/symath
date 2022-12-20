@@ -942,7 +942,7 @@
 
 (defun simplify-expr2 (e) ;; normalize -> simplify -> denormalize
   (if-let (r (assoc e *simplify-cache* :test #'equal-expr))
-    r
+    (cdr r)
     (let ((res (math-rec-funcall #'denorm-expr
                  (simplify-expr3 (math-rec-funcall #'norm-expr  e)))))
       (push (cons e res) *simplify-cache*)
