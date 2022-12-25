@@ -436,7 +436,8 @@
                      (if (= 0.0 r) f e)))
                   (t e))
                 e))
-  :defop (if (not (remove-if #'numberp (cdr e)))
+  :defop (if (and (fboundp (car e))
+                  (every #'numberp (cdr e)))
              (apply (car e) (cdr e))
              e))
 
