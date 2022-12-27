@@ -425,6 +425,7 @@
                     (cond ((= (caddr e) 0) 1)
                           ((= (caddr e) 1) (cadr e))
                           ((numberp (cadr e)) (expt (cadr e) (caddr e)))
+                          ((equal '&math-e (cadr e)) (exp (caddr e)))
                           (t e))
                     e)))
   :op (cast (if (numberp (caddr e))
@@ -453,6 +454,7 @@
                                  `(* ,@(cddr e)))
                              -1)))
   :op (sqrt `(expt ,(cadr e) 1/2))
+  :op (exp `(expt &math-e ,(cadr e)))
   :op (expt (if (and (arrayp (cadr e))
                      (numberp (caddr e))
                      (evenp (caddr e))
@@ -496,7 +498,9 @@
                                   `(expt ,(cadr e) ,(* -1 (caddr e))))))
 
                       (t e))
-                e)))
+                (if (equal '&math-e (cadr e))
+                    `(exp ,(caddr e))
+                    e))))
 
 (def-expr-cond denorm-expr-zop e ;; Replace every (* x) and (+ x) to x
   :op ((+ *) (if (cddr e)
