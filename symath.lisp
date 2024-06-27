@@ -1,6 +1,6 @@
 (defpackage :symath
   (:use cl)
-  (:export simplify array-multiply))
+  (:export simplify array-multiply extract-subexpr))
 
 (in-package :symath)
 
@@ -148,14 +148,12 @@
              (if (equal deep 0)
                  x
                  (math-rec-funcall fn x (if deep (- deep 1))))))
-    (apply #'values
-           (multiple-value-list
-             (funcall fn (cond
-                           ((listp arg)
-                            (cons (car arg) (mapcar #'rfn (cdr arg))))
-                           ((arrayp arg)
-                            (map-array #'rfn arg))
-                           (t arg)))))))
+    (multiple-value-call fn (cond
+                              ((listp arg)
+                               (cons (car arg) (mapcar #'rfn (cdr arg))))
+                              ((arrayp arg)
+                               (map-array #'rfn arg))
+                              (t arg)))))
 
 (defparameter *return-best-variant* nil) ;; If T, defun-stable-expr functions will return less weighted result. USE WITH CAUTION!
 
@@ -176,12 +174,12 @@
   (let ((rfl (reverse fl)))
     (reduce (lambda (r x)
               (if (listp x)
-                  `(math-rec-funcall #',(cadr x) ,r ,(car x))
-                  `(math-rec-funcall #',x ,r)))
+                  `(multiple-value-call #'math-rec-funcall #',(cadr x) ,r ,(car x))
+                  `(multiple-value-call #'math-rec-funcall #',x ,r)))
             (cdr rfl)
             :initial-value (if (listp (car rfl))
-                               `(math-rec-funcall #',(cadr (car rfl)) ,arg ,(car (car rfl)))
-                               `(math-rec-funcall #',(car rfl) ,arg)))))
+                               `(multiple-value-call #'math-rec-funcall #',(cadr (car rfl)) ,arg ,(car (car rfl)))
+                               `(multiple-value-call #'math-rec-funcall #',(car rfl) ,arg)))))
 
 (defmacro def-expr-cond (&rest margs)
   "(expr-cond func-name expr-name :numberp cod :boolp cod :op (op cod) ... :defop cod)"
@@ -293,16 +291,16 @@
                                                      (subseq l2 (+ pos 1)))))))))
                  (eq-sum (cdr e1) (cdr e2))))
           (and (or (isfunc '- e1) (isfunc '- e2))
-               (multiple-value-bind (me oe) (if (isfunc '- e1)
-                                                (values e1 e2)
-                                                (values e2 e1))
-                 (or (and (= 3 (length oe))
-                          (and (isfunc '- oe)  ;; a-b = b-a ; a-b-c-d = (b+c+d)-a
-                               (equal-expr (caddr oe) (cadr me))
-                               (or (and (= 3 (length me))
-                                        (equal-expr (cadr oe) (caddr me)))
-                                   (equal-expr (cons '+ (cddr me))
-                                               (cadr oe)))))
+               (destructuring-bind (me oe) (if (isfunc '- e1)
+                                               (list e1 e2)
+                                               (list e2 e1))
+                 (or (and (isfunc '- oe)  ;; a-b = b-a ; a-b-c-d = (b+c+d)-a
+                          (= 3 (length oe))
+                          (equal-expr (caddr oe) (cadr me))
+                          (or (and (= 3 (length me))
+                                   (equal-expr (cadr oe) (caddr me)))
+                              (equal-expr (cons '+ (cddr me))
+                                          (cadr oe))))
                      (and (isfunc '+ oe) ;; a-b-c-d=b+c+d-a
                           (let ((pos (position-if (lambda (e)
                                                     (equal-expr-1 e (cadr me)))
@@ -673,166 +671,206 @@
                                   (cdr e))))
                    e))))))
 
-(defun collect-one-common (e) ;; extract one most common expression from e. Don't ever try to improve, if not understand it completely.
-  (labels ((eqf (e1 e2)
-             (or (equal-expr e1 e2)
-                 (equal-expr-1 e1 e2)
-                 (and (isfunc 'expt e2)
-                      (or (equal-expr e1 (cadr e2))
-                          (equal-expr-1 e1 (cadr e2))))
-                 (and (isfunc 'expt e1)
-                      (or (equal-expr e2 (cadr e1))
-                          (equal-expr-1 e2 (cadr e1))))
-                 (and (isfunc 'expt e1)
-                      (isfunc 'expt e2)
-                      (or (equal-expr (cadr e1) (cadr e2))
-                          (equal-expr-1 (cadr e1) (cadr e2)))))))
-    (if (isfunc '+ e)
-      (let ((e (math-rec-funcall #'collect-exprs e))
-            (ecnt-l nil))
-        (labels
-          ((equal-expr-2 (e1 e2)
-             (or (equal-expr e1 e2)
-                 (equal-expr-1 e1 e2)))
-           (count-expr (e1 nt)
-             (if (not (numberp e1))
-               (labels ((inc-hash-test (e)
-                          (if (not (numberp e))
-                              (if-let (vk (rassoc e ecnt-l :test #'eqf))
-                                      (pushnew nt (car vk))
-                                      (push (cons (list nt) e) ecnt-l)))))
-                 (map nil
-                   (lambda (e2)
-                     (if (isfunc 'expt e2)
-                         (inc-hash-test (cadr e2))
-                         (inc-hash-test e2)))
-                   (if (isfunc '* e1)
-                       (cons e1 (cdr e1))
-                       (list e1)))))))
-          (map nil
-               #'count-expr
-               (cdr e)
-               (loop for i below (length (cdr e)) collect i))
-          (let* ((mxc (apply #'max (mapcar (lambda (x) (length (car x))) ecnt-l)))
-                 (subexs (if (= mxc 1)
-                             (mapcar
-                               (lambda (x)
-                                 (cons '+ x))
-                               (all-list-decs (cdr e) :min 2 :max (length (cddr e)))))))
-            (if (= mxc 1)
-                (map nil
-                     #'count-expr
-                     subexs
-                     (loop for i below (length subexs) collect (+ i (length (cdr e))))))
-            (if (> (apply #'max (mapcar (lambda (x) (length (car x))) ecnt-l)) 1)
-              (let* ((ee (cdr (car (stable-sort (reverse ecnt-l) #'> :key (lambda (x) (length (car x)))))))
-                     (ee (if (isfunc 'expt ee)
-                             (cadr ee)
-                             ee))
-                     (see (find ee subexs :test #'equal-expr-2))
-                     (es (if see
-                             (labels ((rmse (le ls)
-                                        (if le
-                                          (let ((pos (position (car le) ls :test #'equal-expr)))
+(defun eqf (e1 e2) ;; helper function for extract-subexpr and collect-one-common
+  (or (equal-expr e1 e2)
+      (equal-expr-1 e1 e2)
+      (and (isfunc 'expt e2)
+           (or (equal-expr e1 (cadr e2))
+               (equal-expr-1 e1 (cadr e2))))
+      (and (isfunc 'expt e1)
+           (or (equal-expr e2 (cadr e1))
+               (equal-expr-1 e2 (cadr e1))))
+      (and (isfunc 'expt e1)
+           (isfunc 'expt e2)
+           (or (equal-expr (cadr e1) (cadr e2))
+               (equal-expr-1 (cadr e1) (cadr e2))))))
+
+(defun extract-subexpr-norm (e subex) ;; convert e (must be normalized) to the form: (subex^n)*e1+e2, return (values n e1 e2)
+  (labels
+    ((equal-expr-2 (e1 e2)
+       (or (equal-expr e1 e2)
+           (equal-expr-1 e1 e2)))
+     (get-deg (x &key in-mul)
+       (cond ((equal-expr subex x)
+              (list 1 1))
+             ((equal-expr-1 subex x)
+              (list 1 -1))
+             ((and (isfunc 'expt x)
+                   (equal-expr subex (cadr x)))
+              (list (caddr x) 1))
+             ((and (isfunc 'expt x)
+                   (equal-expr-1 (cadr x) subex))
+              (list (caddr x) `(expt -1 ,(caddr x))))
+             ((and (not in-mul)
+                   (isfunc '* x))
+              (map nil
+                (lambda (x1)
+                  (if-let (res (get-deg x1 :in-mul t))
+                    (return-from get-deg res)))
+                (cdr x))))))
+    (let* ((args (if (isfunc '+ e)
+                     (if (isfunc '+ subex)
+                         (labels ((rmse (le ls &optional res m)
+                                    (if (and le ls)
+                                        (let ((pos (position (car le) ls :test (if m #'equal-expr-1 #'equal-expr))))
+                                          (multiple-value-call #'rmse
+                                            (cdr le)
                                             (if pos
-                                                (rmse (cdr le) `(,@(subseq ls 0 pos) ,@(subseq ls (+ pos 1))))
-                                                (cons (car le) (rmse (cdr le) ls)))))))
-                               `(+ ,see ,@(rmse (cdr e) (cdr see))))
-                             e))
-                     (ee-args nil)
-                     (nee-args nil))
-                (labels ((get-deg (x &key in-mul)
-                           (cond ((equal-expr ee x)
-                                  (list 1 1))
-                                 ((equal-expr-1 ee x)
-                                  (list 1 -1))
-                                 ((and (isfunc 'expt x)
-                                       (equal-expr ee (cadr x)))
-                                  (list (caddr x) 1))
-                                 ((and (isfunc 'expt x)
-                                       (equal-expr-1 (cadr x) ee))
-                                  (list (caddr x) `(expt -1 ,(caddr x))))
-                                 ((and (not in-mul)
-                                       (isfunc '* x))
-                                  (map nil
-                                    (lambda (x1)
-                                      (if-let (res (get-deg x1 :in-mul t))
-                                        (return-from get-deg res)))
-                                    (cdr x))))))
-                  (map nil
-                    (lambda (x)
-                      (if-let (dg (get-deg x))
-                        (push (cons dg x) ee-args)
-                        (push x nee-args)))
-                    (cdr es)))
-                (let* ((degs (remove-duplicates (mapcar #'caar ee-args) :test #'equal-expr))
-                       (ee-deg (if (every #'numberp degs)
-                                   (apply #'min degs)
-                                   (if (cdr degs)
-                                       1
-                                       (car degs))))
-                       (ree (if (equal ee-deg 1)
-                                ee
-                                `(expt ,ee ,ee-deg)))
-                       (ree-arg `(* ,ree
-                                    ,(let ((eargs (mapcar
-                                                    (lambda (de)
-                                                      (let ((dg (caar de))
-                                                            (ml (cadr (car de)))
-                                                            (ex (cdr de)))
-                                                        (cond
-                                                          ((and (mequal dg ee-deg)
-                                                                (equal-expr-2 ex ee))
-                                                           ml)
-                                                          ((and (isfunc 'expt ex)
-                                                                (equal-expr-2 (cadr ex) ee))
-                                                           `(* ,ml (expt ,(cadr ex) (- ,(caddr ex) ,ee-deg))))
-                                                          ((isfunc '* ex)
-                                                           (labels ((rpe (exl)
-                                                                      (if exl
-                                                                          (let ((ex2 (car exl)))
-                                                                            (if (eqf ex2 ee)
-                                                                              (cond ((mequal dg ee-deg)
-                                                                                     (cons ml (cdr exl)))
-                                                                                    ((isfunc 'expt ex2)
-                                                                                     (cons
-                                                                                       `(* ,ml (expt ,(cadr ex2) (- ,(caddr ex2) ,ee-deg)))
-                                                                                       (cdr exl)))
-                                                                                    (t (cons
-                                                                                         `(* ,ml (expt ,ex2 (- ,dg ,ee-deg)))
-                                                                                         (cdr exl))))
-                                                                              (cons ex2 (rpe (cdr exl)))))
-                                                                          (error (format nil "Internal error: common term not found!")))))
-                                                             (cons '* (rpe (cdr ex)))))
-                                                          (t (error "Internal error: cannot find expr to collect")))))
-                                                    ee-args)))
-                                       (if (cdr eargs)
-                                         (cons '+ eargs)
-                                         (car eargs))))))
-                  (values
-                    (if nee-args
-                        `(+ ,ree-arg ,@nee-args)
-                        ree-arg)
-                    t)))
-              (values e nil)))))
-      (values e nil))))
+                                                `(,@(subseq ls 0 pos) ,@(subseq ls (1+ pos)))
+                                                ls)
+                                            (if pos
+                                                res
+                                                (cons (car le) res))
+                                            m))
+                                        (if ls
+                                            `(,@(reverse res) ,@le)
+                                            (values `(,@(reverse res) ,(if m `(* -1 ,subex) subex) ,@le) t)))))
+                            (multiple-value-bind (args fnd) (rmse (cdr e) (cdr subex))
+                              (if fnd
+                                  args
+                                  (rmse (cdr e) (cdr subex) nil t))))
+                         (cdr e))
+                     (list e)))
+           (dgsl (mapcar #'cons
+                         (mapcar #'get-deg args)
+                         args))
+           (ee-args (remove-if #'null dgsl :key #'car))
+           (nee-args (mapcar #'cdr (remove-if-not #'null dgsl :key #'car)))
+           (degs (remove-duplicates (mapcar #'caar ee-args) :test #'equal-expr))
+           (ee-deg (if (and degs (every #'numberp degs))
+                       (apply #'min degs)
+                       (if (cdr degs)
+                           1
+                           (if ee-args
+                               (car degs)
+                               0))))
+           (eargs (mapcar
+                    (lambda (de)
+                      (let ((dg (caar de))
+                            (ml (cadr (car de)))
+                            (ex (cdr de)))
+                        (cond
+                          ((and (mequal dg ee-deg)
+                                (equal-expr-2 ex subex))
+                           ml)
+                          ((and (isfunc 'expt ex)
+                                (equal-expr-2 (cadr ex) subex))
+                           `(* ,ml (expt ,(cadr ex) (- ,(caddr ex) ,ee-deg))))
+                          ((isfunc '* ex)
+                           (labels ((rpe (exl)
+                                      (if exl
+                                          (let ((ex2 (car exl)))
+                                            (if (eqf ex2 subex)
+                                              (cond ((mequal dg ee-deg)
+                                                     (cons ml (cdr exl)))
+                                                    ((isfunc 'expt ex2)
+                                                     (cons
+                                                       `(* ,ml (expt ,(cadr ex2) (- ,(caddr ex2) ,ee-deg)))
+                                                       (cdr exl)))
+                                                    (t (cons
+                                                         `(* ,ml (expt ,ex2 (- ,dg ,ee-deg)))
+                                                         (cdr exl))))
+                                              (cons ex2 (rpe (cdr exl)))))
+                                          (error (format nil "Internal error: common term not found!")))))
+                             (cons '* (rpe (cdr ex)))))
+                          (t (error "Internal error: cannot find expr to collect")))))
+                    ee-args)))
+      (values ee-deg
+              (if (cdr eargs)
+                  (cons '+ eargs)
+                  (if eargs
+                      (car eargs)
+                      0))
+              (if (cdr nee-args)
+                  (cons '+ nee-args)
+                  (if nee-args
+                      (car nee-args)
+                      0))))))
+
+(defun extract-subexpr (e subex) ;; normailze -> extract-subexpr-norm -> denormalize
+  (multiple-value-bind (n e1 e2) (extract-subexpr-norm (math-rec-funcall #'norm-expr e) (math-rec-funcall #'norm-expr subex))
+    (if (mequal n 0)
+        (values 0 0 e)
+        (labels ((den (e)
+                   (chain-func-rec (extract-nums denorm-expr) e)))
+          (values (den n)
+                  (den e1)
+                  (den e2))))))
+
+(defun collect-one-common (e) ;; extract one most common expression from e. Don't ever try to improve, if not understand it completely.
+  (if (isfunc '+ e)
+    (let ((e (math-rec-funcall #'collect-exprs e))
+          (ecnt-l nil))
+      (labels
+        ((count-expr (e1 nt)
+           (if (not (numberp e1))
+             (labels ((inc-hash-test (e)
+                        (if (not (numberp e))
+                            (if-let (vk (rassoc e ecnt-l :test #'eqf))
+                                    (pushnew nt (car vk))
+                                    (push (cons (list nt) e) ecnt-l)))))
+               (map nil
+                 (lambda (e2)
+                   (if (isfunc 'expt e2)
+                       (inc-hash-test (cadr e2))
+                       (inc-hash-test e2)))
+                 (if (isfunc '* e1)
+                     (cons e1 (cdr e1))
+                     (list e1)))))))
+        (map nil
+             #'count-expr
+             (cdr e)
+             (loop for i below (length (cdr e)) collect i))
+        (let* ((mxc (apply #'max (mapcar (lambda (x) (length (car x))) ecnt-l)))
+               (subexs (if (= mxc 1)
+                           (mapcar
+                             (lambda (x)
+                               (cons '+ x))
+                             (all-list-decs (cdr e) :min 2 :max (length (cddr e)))))))
+          (if (= mxc 1)
+              (map nil
+                   #'count-expr
+                   subexs
+                   (loop for i below (length subexs) collect (+ i (length (cdr e))))))
+          (if (> (apply #'max (mapcar (lambda (x) (length (car x))) ecnt-l)) 1)
+            (let* ((ee (cdr (car (stable-sort (reverse ecnt-l) #'> :key (lambda (x) (length (car x)))))))
+                   (ee (if (isfunc 'expt ee)
+                           (cadr ee)
+                           ee)))
+              (multiple-value-bind (dg e1 e2) (extract-subexpr e ee)
+                (if (not (mequal dg 0))
+                    (values (let* ((eedg (if (mequal dg 1)
+                                             ee
+                                             `(expt ,ee ,dg)))
+                                   (ee1 (if (mequal e1 1)
+                                            eedg
+                                            `(* ,eedg ,e1))))
+                              (if (mequal e2 0)
+                                  ee1
+                                  `(+ ,ee1 ,e2)))
+                            t)
+                    (values e nil))))
+            (values e nil)))))
+    (values e nil)))
 
 (defun collect-common (e) ;; collect all comvon subexprs
-  (labels ((cocr (e &optional fnd)
+  (labels ((cocr (e)
              (multiple-value-bind (e1 r) (collect-one-common (copy-expr e))
                (if r
                    (labels ((cocrt (e2)
                               (if (equal-expr e e2)
                                   (error "Internal error: deadly recursion in collect-common"))
-                              (cocr e2 t)))
+                              (cocr e2)))
                      (chain-func-rec
                        (cocrt
+                        norm-expr
                         collect-common-nums
+                        collect-exprs
                         extract-nums)
                        e1))
-                   (values e fnd)))))
+                   e))))
     (if (isfunc '+ e)
-        (cocr e)
+        (cocr (math-rec-funcall #'norm-expr e))
         e)))
 
 (def-expr-cond calc-arrays e
@@ -919,7 +957,8 @@
 
 (defun-stable-expr simplify-expr3 (e) ;; Simplify normalized expression
   (chain-func-rec
-    (extract-nums
+    (norm-expr
+     extract-nums
      collect-same-expts
      extract-nums
      collect-common-nums
@@ -949,7 +988,7 @@
   (if-let (r (assoc e *simplify-cache* :test #'equal-expr))
     (cdr r)
     (let ((res (math-rec-funcall #'denorm-expr
-                 (simplify-expr3 (math-rec-funcall #'norm-expr  e)))))
+                 (simplify-expr3 e))))
       (push (cons e res) *simplify-cache*)
       res)))
 

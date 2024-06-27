@@ -221,14 +221,10 @@
                                    '(* q (+ x y) (+ a b))))
   (assert-true (symath::equal-expr (symath::collect-common '(+ (expt x 2) (* -1 (expt x 2))))
                                    0))
-  (assert-true (or (symath::equal-expr (symath::collect-common '(+ (* (+ x (* -1 y)) a) (* (+ y (* -1 x)) b) c))
-                                       '(+ (* (+ x (* -1 y)) (+ a (* -1 b))) c))
-                   (symath::equal-expr (symath::collect-common '(+ (* (+ x (* -1 y)) a) (* (+ y (* -1 x)) b) c))
-                                       '(+ (* (+ y (* -1 x)) (+ b (* -1 a))) c))))
-  (assert-true (or (symath::equal-expr (cc-test '(+ (* (+ x (* -1 y)) a) (* (+ (* y 2) (* -2 x)) b) c))
-                                       '(+ (* (+ x (* -1 y)) (+ a (* -2 b))) c))
-                   (symath::equal-expr (cc-test '(+ (* (+ x (* -1 y)) a) (* (+ (* y 2) (* -2 x)) b) c))
-                                       '(+ (* (+ y (* -1 x)) (+ (* 2 b) (* -1 a))) c))))
+  (assert-true (symath::equal-expr (symath::denorm-expr (symath::collect-common '(+ (* (+ x (* -1 y)) a) (* (+ y (* -1 x)) b) c)))
+                                  '(+ (* (- x y) (- a b)) c)))
+  (assert-true (symath::equal-expr (symath::denorm-expr (cc-test '(+ (* (+ x (* -1 y)) a) (* (+ (* y 2) (* -2 x)) b) c)))
+                                   '(+ (* (- x y) (- a (* 2 b))) c)))
   (assert-true (symath::equal-expr (symath::collect-common '(+ (* x (+ a b c)) a b c d e))
                                    '(+ (* (+ a b c) (+ 1 x)) d e)))
   (assert-true (symath::equal-expr (symath::collect-common '(+ (* x (+ a (* -1 b))) (* -1 a) b))
@@ -523,10 +519,24 @@
   (assert-true (symath::equal-expr (symath::collect-same-expts '(* (expt x 2) (expt a 3) (expt y 2) (expt b 3)))
                                    '(* (expt (* x y) 2) (expt (* a b) 3)))))
 
+(deftest extract-subexpr ((symath) (equal-expr norm-expr))
+  (assert-true (multiple-value-bind (n e1 e2) (extract-subexpr '(+ (sqrt x) 1) 'x)
+                 (and (equal n 1/2
+                            (equal e1 1)
+                            (equal e2 1))))
+   (assert-true (multiple-value-bind (n e1 e2) (extract-subexpr '(+ (sqrt (+ x y)) 1) '(+ x y))
+                   (and (equal n 1/2)
+                        (equal e1 1
+                               (equal e2 1))))
+    (assert-true (multiple-value-bind (n e1 e2) (extract-subexpr '(+ (* (- a b) x) b (* -1 a)) '(- a b))
+                                (and (equal n 1/2)
+                                     (equal e1 1)
+                                     (equal e2 1)))))))
 
 (deftest simplify ((symath) (equal-expr collect-same-expts calc-arrays collect-common collect-common-nums
                              collect-expt expand-mul expand-expt2 expand-expt1 denorm-expr-plus-n denorm-expr-minus1
-                             denorm-expr-minus denorm-expr-zop denorm-expr-expt norm-expr extract-nums collect-exprs))
+                             denorm-expr-minus denorm-expr-zop denorm-expr-expt norm-expr extract-nums collect-exprs
+                             extract-subexpr))
   (symath::clear-simplify-cache)
   (assert-true (symath::equal-expr (simplify '(/ (* (+ x 1) (+ y 1)) (* (+ y 1) (+ z 1) (+ x 1))))
                                    '(/ 1 (+ z 1))))
@@ -535,6 +545,8 @@
   (assert-true (equal (simplify '(- x (+ x 1)))
                       -1))
   (assert-true (symath::equal-expr (simplify '(/ (- xmi xma) (* (- xma xmi) (- yma ymi) (- zma zmi))))
-                                   '(/ -1 (* (- zma zmi) (- yma ymi))))))
+                                   '(/ -1 (* (- zma zmi) (- yma ymi)))))
+  (assert-true (symath::equal-expr (simplify '(+ (expt x b) (expt x b)))
+                                   '(* 2 (expt x b)))))
 
 (run-suite 'symath)
