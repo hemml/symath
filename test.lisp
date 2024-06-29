@@ -521,17 +521,17 @@
 
 (deftest extract-subexpr ((symath) (equal-expr norm-expr))
   (assert-true (multiple-value-bind (n e1 e2) (extract-subexpr '(+ (sqrt x) 1) 'x)
-                 (and (equal n 1/2
-                            (equal e1 1)
-                            (equal e2 1))))
-   (assert-true (multiple-value-bind (n e1 e2) (extract-subexpr '(+ (sqrt (+ x y)) 1) '(+ x y))
-                   (and (equal n 1/2)
-                        (equal e1 1
-                               (equal e2 1))))
-    (assert-true (multiple-value-bind (n e1 e2) (extract-subexpr '(+ (* (- a b) x) b (* -1 a)) '(- a b))
-                                (and (equal n 1/2)
-                                     (equal e1 1)
-                                     (equal e2 1)))))))
+                 (and (equal n 1/2)
+                      (equal e1 1)
+                      (equal e2 1))))
+  (assert-true (multiple-value-bind (n e1 e2) (extract-subexpr '(+ (sqrt (+ x y)) 1) '(+ x y))
+                  (and (equal n 1/2)
+                       (equal e1 1)
+                       (equal e2 1))))
+  (assert-true (multiple-value-bind (n e1 e2) (extract-subexpr '(+ (* (- a b) x) b (* -1 a)) '(- a b))
+                  (and (equal n 1)
+                       (symath::equal-expr e1 '(+ -1 X))
+                       (equal e2 0)))))
 
 (deftest simplify ((symath) (equal-expr collect-same-expts calc-arrays collect-common collect-common-nums
                              collect-expt expand-mul expand-expt2 expand-expt1 denorm-expr-plus-n denorm-expr-minus1
