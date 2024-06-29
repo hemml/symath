@@ -755,7 +755,7 @@
                            ml)
                           ((and (isfunc 'expt ex)
                                 (equal-expr-2 (cadr ex) subex))
-                           `(* ,ml (expt ,(cadr ex) (- ,(caddr ex) ,ee-deg))))
+                           `(* ,ml (expt ,(cadr ex) (+ ,(caddr ex) (* -1 ,ee-deg)))))
                           ((isfunc '* ex)
                            (labels ((rpe (exl)
                                       (if exl
@@ -765,10 +765,10 @@
                                                      (cons ml (cdr exl)))
                                                     ((isfunc 'expt ex2)
                                                      (cons
-                                                       `(* ,ml (expt ,(cadr ex2) (- ,(caddr ex2) ,ee-deg)))
+                                                       `(* ,ml (expt ,(cadr ex2) (+ ,(caddr ex2) (* -1 ,ee-deg))))
                                                        (cdr exl)))
                                                     (t (cons
-                                                         `(* ,ml (expt ,ex2 (- ,dg ,ee-deg)))
+                                                         `(* ,ml (expt ,ex2 (+ ,dg (* -1 ,ee-deg))))
                                                          (cdr exl))))
                                               (cons ex2 (rpe (cdr exl)))))
                                           (error (format nil "Internal error: common term not found!")))))
@@ -837,7 +837,7 @@
                    (ee (if (isfunc 'expt ee)
                            (cadr ee)
                            ee)))
-              (multiple-value-bind (dg e1 e2) (extract-subexpr e ee)
+              (multiple-value-bind (dg e1 e2) (extract-subexpr-norm e ee)
                 (if (not (mequal dg 0))
                     (values (let* ((eedg (if (mequal dg 1)
                                              ee
@@ -855,23 +855,16 @@
 
 (defun collect-common (e) ;; collect all comvon subexprs
   (labels ((cocr (e)
-             (multiple-value-bind (e1 r) (collect-one-common (copy-expr e))
-               (if r
-                   (labels ((cocrt (e2)
-                              (if (equal-expr e e2)
-                                  (error "Internal error: deadly recursion in collect-common"))
-                              (cocr e2)))
-                     (chain-func-rec
-                       (cocrt
-                        norm-expr
-                        collect-common-nums
-                        collect-exprs
-                        extract-nums)
-                       e1))
-                   e))))
-    (if (isfunc '+ e)
-        (cocr (math-rec-funcall #'norm-expr e))
-        e)))
+             (if (isfunc '+ e)
+                 (multiple-value-bind (e1 r) (collect-one-common (copy-expr e))
+                   (if r
+                       (cocr (math-rec-funcall #'collect-common-nums
+                               (math-rec-funcall #'collect-exprs
+                                 (math-rec-funcall #'extract-nums
+                                   e1))))
+                       e))
+                 e)))
+    (math-rec-funcall #'cocr (cocr e))))
 
 (def-expr-cond calc-arrays e
    :op ((+ -) (if (some #'arrayp (cdr e))
@@ -963,6 +956,7 @@
      extract-nums
      collect-common-nums
      collect-exprs
+     collect-expt
      collect-common
      extract-nums
      collect-exprs
