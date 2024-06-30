@@ -685,6 +685,10 @@
            (or (equal-expr (cadr e1) (cadr e2))
                (equal-expr-1 (cadr e1) (cadr e2))))))
 
+(defun is-int (e)
+  (or (rationalp e)
+      (and (floatp e) (mequal (floor e) e))))
+
 (defun extract-subexpr-norm (e subex) ;; convert e (must be normalized) to the form: (subex^n)*e1+e2, return (values n e1 e2)
   (labels
     ((equal-expr-2 (e1 e2)
@@ -737,7 +741,7 @@
            (ee-args (remove-if #'null dgsl :key #'car))
            (nee-args (mapcar #'cdr (remove-if-not #'null dgsl :key #'car)))
            (degs (remove-duplicates (mapcar #'caar ee-args) :test #'equal-expr))
-           (ee-deg (if (and degs (every #'numberp degs))
+           (ee-deg (if (and degs (every #'is-int degs))
                        (apply #'min degs)
                        (if (cdr degs)
                            0
@@ -853,6 +857,7 @@
 
 (defun-stable-expr collect-common (e) ;; collect all comvon subexprs
   (labels ((lp (e)
+             (log:info e)
              (let* ((e (math-rec-funcall #'collect-exprs
                          (math-rec-funcall #'collect-common-nums
                            (math-rec-funcall #'extract-nums e)))))
