@@ -740,10 +740,8 @@
            (ee-deg (if (and degs (every #'numberp degs))
                        (apply #'min degs)
                        (if (cdr degs)
-                           1
-                           (if ee-args
-                               (car degs)
-                               0))))
+                           0
+                           (car degs))))
            (eargs (mapcar
                     (lambda (de)
                       (let ((dg (caar de))
@@ -996,7 +994,3 @@
     (if (arrayp e1)
         (map-array #'simplify-expr2 e1)
         (simplify-expr2 e1))))
-
-(defun xxx ()
-  (setf *simplify-cache* nil)
-  (simplify '(+ (expt x b) (expt x b))))
