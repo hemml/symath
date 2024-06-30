@@ -857,7 +857,6 @@
 
 (defun-stable-expr collect-common (e) ;; collect all comvon subexprs
   (labels ((lp (e)
-             (log:info e)
              (let* ((e (math-rec-funcall #'collect-exprs
                          (math-rec-funcall #'collect-common-nums
                            (math-rec-funcall #'extract-nums e)))))
