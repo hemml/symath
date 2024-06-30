@@ -671,23 +671,31 @@
                                   (cdr e))))
                    e))))))
 
-(defun eqf (e1 e2) ;; helper function for extract-subexpr and collect-one-common
-  (or (equal-expr e1 e2)
-      (equal-expr-1 e1 e2)
-      (and (isfunc 'expt e2)
-           (or (equal-expr e1 (cadr e2))
-               (equal-expr-1 e1 (cadr e2))))
-      (and (isfunc 'expt e1)
-           (or (equal-expr e2 (cadr e1))
-               (equal-expr-1 e2 (cadr e1))))
-      (and (isfunc 'expt e1)
-           (isfunc 'expt e2)
-           (or (equal-expr (cadr e1) (cadr e2))
-               (equal-expr-1 (cadr e1) (cadr e2))))))
-
 (defun is-int (e)
   (or (rationalp e)
       (and (floatp e) (mequal (floor e) e))))
+
+(defun is-int-expt (e)
+  (and (isfunc 'expt e)
+       (is-int (caddr e))))
+
+(defun eqf (e1 e2 &key int-expt) ;; helper function for extract-subexpr and collect-one-common
+  (let ((expt-fn (if int-expt
+                     #'is-int-expt
+                     (lambda (x) (isfunc 'expt x)))))
+    (or (equal-expr e1 e2)
+        (equal-expr-1 e1 e2)
+        (and (funcall expt-fn e2)
+             (or (equal-expr e1 (cadr e2))
+                 (equal-expr-1 e1 (cadr e2))))
+        (and (funcall expt-fn e1)
+             (or (equal-expr e2 (cadr e1))
+                 (equal-expr-1 e2 (cadr e1))))
+        (and (funcall expt-fn e1)
+             (funcall expt-fn e2)
+             (or (equal-expr (cadr e1) (cadr e2))
+                 (equal-expr-1 (cadr e1) (cadr e2)))))))
+
 
 (defun extract-subexpr-norm (e subex) ;; convert e (must be normalized) to the form: (subex^n)*e1+e2, return (values n e1 e2)
   (labels
@@ -802,18 +810,19 @@
 (defun collect-one-common (e) ;; extract one most common expression from e. Don't ever try to improve, if not understand it completely.
   (if (isfunc '+ e)
     (let ((e (math-rec-funcall #'collect-exprs e))
-          (ecnt-l nil))
+          (ecnt-l nil)
+          (eqf (lambda (e1 e2) (eqf e1 e2 :int-expt t))))
       (labels
         ((count-expr (e1 nt)
            (if (not (numberp e1))
              (labels ((inc-hash-test (e)
                         (if (not (numberp e))
-                            (if-let (vk (rassoc e ecnt-l :test #'eqf))
+                            (if-let (vk (rassoc e ecnt-l :test eqf))
                                     (pushnew nt (car vk))
                                     (push (cons (list nt) e) ecnt-l)))))
                (map nil
                  (lambda (e2)
-                   (if (isfunc 'expt e2)
+                   (if (is-int-expt e2)
                        (inc-hash-test (cadr e2))
                        (inc-hash-test e2)))
                  (if (isfunc '* e1)
