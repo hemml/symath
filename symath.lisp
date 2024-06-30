@@ -368,16 +368,16 @@
                 finally (return s))
           0.1)))
 
-(defmacro defun-stable-expr (name args &rest cod)
-  "Define the function of one argument, which will call itself with its result as a argument, until already a seen result will be returned"
-  (let ((h (gensym))
-        (r (gensym))
-        (arg (gensym)))
-    `(defun ,name (,arg &optional ,h)
-       (let* ((,r (funcall (lambda ,args ,@cod) ,arg)))
-         (if (position ,r ,h :test #'equal-expr)
-             ,r ; (caar (stable-sort (mapcar #'cons ,h (mapcar #'expr-eqight ,h)) #'< :key #'cdr))
-             (,name ,r (cons ,r ,h)))))))
+; (defmacro defun-stable-expr (name args &rest cod)
+;   "Define the function of one argument, which will call itself with its result as a argument, until already a seen result will be returned"
+;   (let ((h (gensym))
+;         (r (gensym))
+;         (arg (gensym)))
+;     `(defun ,name (,arg &optional ,h)
+;        (let* ((,r (funcall (lambda ,args ,@cod) ,arg)))
+;          (if (position ,r ,h :test #'equal-expr)
+;              ,r ; (caar (stable-sort (mapcar #'cons ,h (mapcar #'expr-eqight ,h)) #'< :key #'cdr))
+;              (,name ,r (cons ,r ,h)))))))
 
 (defun collect-exprs (e)
   "Collecting * and + expressions: (+ a (+ b c)) => (+ a b c)"
@@ -853,18 +853,21 @@
             (values e nil)))))
     (values e nil)))
 
-(defun collect-common (e) ;; collect all comvon subexprs
-  (labels ((cocr (e)
-             (if (isfunc '+ e)
-                 (multiple-value-bind (e1 r) (collect-one-common (copy-expr e))
-                   (if r
-                       (cocr (math-rec-funcall #'collect-common-nums
-                               (math-rec-funcall #'collect-exprs
-                                 (math-rec-funcall #'extract-nums
-                                   e1))))
-                       e))
-                 e)))
-    (math-rec-funcall #'cocr (cocr e))))
+(defun-stable-expr collect-common (e) ;; collect all comvon subexprs
+  (labels ((lp (e)
+             (let* ((e (math-rec-funcall #'collect-exprs
+                         (math-rec-funcall #'collect-common-nums
+                           (math-rec-funcall #'extract-nums e)))))
+               (if (listp e)
+                   (let ((e (cons (car e) (mapcar #'lp (cdr e)))))
+                     (if (isfunc '+ e)
+                         (multiple-value-bind (e1 r) (collect-one-common e)
+                           (if r
+                               (lp e1)
+                               e))
+                         e))
+                   e))))
+    (lp e)))
 
 (def-expr-cond calc-arrays e
    :op ((+ -) (if (some #'arrayp (cdr e))
@@ -948,30 +951,32 @@
                             (car expt-terms))))
                   e)))))
 
+(defmacro chain-debug (expr)
+  (if (listp expr)
+      (let* ((ll (cddr expr))
+             (fn (if ll (cadr expr) (car expr)))
+             (op (if ll (caddr expr) (cadr expr)))
+             (res (gensym)))
+        `(let ((,res (chain-debug ,op)))
+           (format t "~&(~A ~A)~%" ',fn ,res)
+           (,@(if ll '(math-rec-funcall)) ,fn ,res)))
+      expr))
+
 (defun-stable-expr simplify-expr3 (e) ;; Simplify normalized expression
-  (chain-func-rec
-    (norm-expr
-     extract-nums
-     collect-same-expts
-     extract-nums
-     collect-common-nums
-     collect-exprs
-     collect-expt
-     collect-common
-     extract-nums
-     collect-exprs
-     collect-expt
-     expand-mul
-     extract-nums
-     collect-exprs
-     collect-expt
-     collect-exprs
-     extract-nums
-     expand-expt2
-     expand-expt1
-     extract-nums
-     collect-exprs)
-    e))
+;  (chain-debug
+    (math-rec-funcall #'extract-nums
+      (math-rec-funcall #'collect-same-expts
+        (math-rec-funcall #'collect-expt
+          (collect-common
+            (math-rec-funcall #'extract-nums
+              (math-rec-funcall #'expand-mul
+                (math-rec-funcall #'extract-nums
+                  (math-rec-funcall #'collect-exprs
+                    (math-rec-funcall #'extract-nums
+                      (math-rec-funcall #'collect-expt
+                        (math-rec-funcall #'expand-expt2
+                         (math-rec-funcall #'expand-expt1
+                           (math-rec-funcall #'collect-exprs e))))))))))))))
 
 (defparameter *simplify-cache* (list))
 
@@ -982,7 +987,7 @@
   (if-let (r (assoc e *simplify-cache* :test #'equal-expr))
     (cdr r)
     (let ((res (math-rec-funcall #'denorm-expr
-                 (simplify-expr3 e))))
+                 (simplify-expr3 (math-rec-funcall #'norm-expr e)))))
       (push (cons e res) *simplify-cache*)
       res)))
 
@@ -991,3 +996,7 @@
     (if (arrayp e1)
         (map-array #'simplify-expr2 e1)
         (simplify-expr2 e1))))
+
+(defun xxx ()
+  (setf *simplify-cache* nil)
+  (simplify '(+ (expt x b) (expt x b))))
