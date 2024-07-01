@@ -845,7 +845,7 @@
                    (loop for i below (length subexs) collect (+ i (length (cdr e))))))
           (if (> (apply #'max (mapcar (lambda (x) (length (car x))) ecnt-l)) 1)
             (let* ((ee (cdr (car (stable-sort (reverse ecnt-l) #'> :key (lambda (x) (length (car x)))))))
-                   (ee (if (isfunc 'expt ee)
+                   (ee (if (is-int-expt ee)
                            (cadr ee)
                            ee)))
               (multiple-value-bind (dg e1 e2) (extract-subexpr-norm e ee)
