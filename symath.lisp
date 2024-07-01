@@ -865,16 +865,17 @@
     (values e nil)))
 
 (defun-stable-expr collect-common (e) ;; collect all comvon subexprs
-  (labels ((lp (e)
+  (labels ((lp (e &optional (deep 0))
+             (if (> deep 1000) (error "Too deep recursion in collect-common"))
              (let* ((e (math-rec-funcall #'collect-exprs
                          (math-rec-funcall #'collect-common-nums
                            (math-rec-funcall #'extract-nums e)))))
                (if (listp e)
-                   (let ((e (cons (car e) (mapcar #'lp (cdr e)))))
+                   (let ((e (cons (car e) (mapcar (lambda (x) (lp x (1+ deep))) (cdr e)))))
                      (if (isfunc '+ e)
                          (multiple-value-bind (e1 r) (collect-one-common e)
                            (if r
-                               (lp e1)
+                               (lp e1 (1+ deep))
                                e))
                          e))
                    e))))
