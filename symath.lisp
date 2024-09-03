@@ -1,6 +1,6 @@
 (defpackage :symath
   (:use cl)
-  (:export simplify array-multiply extract-subexpr))
+  (:export simplify array-multiply extract-subexpr get-polynome-cfs))
 
 (in-package :symath)
 
@@ -844,6 +844,13 @@
             (values (den n)
                     (den e1)
                     (den e2)))))))
+
+(defun get-polynome-cfs (e v &key expand) ;; Convert e to polynome against v and return alist of coefficients, like ((0 . zero-cf) (1 . 1-cf) (2 . 2-cf) ...)
+  (multiple-value-bind (n e1 e2) (extract-subexpr e v :expand expand)
+    (cond ((> n 0) (cons (cons 0 e2)
+                         (mapcar (lambda (cf) (cons (+ (car cf) n) (cdr cf))) (get-polynome-cfs e1 v :expand expand))))
+          ((= n 0) (list (cons 0 e2)))
+          (t (error (format nil "Strange polynomial coefficient found: ~A" n))))))
 
 (defun collect-one-common (e) ;; extract one most common expression from e. Don't ever try to improve, if not understand it completely.
   (if (isfunc '+ e)
