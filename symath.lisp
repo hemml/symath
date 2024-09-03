@@ -609,35 +609,35 @@
                                  (cdadr e))))
                   (t e))))
 
+(defparameter *max-degree-expansion* 5)
+
+(def-expr-cond expand-int-expt e ;; (expt x 3) => (* x x x)
+  :op (expt (if (and (mintegerp (caddr e))
+                     (listp (cadr e))
+                     (> (abs (caddr e)) 1)
+                     (<= (abs (caddr e)) *max-degree-expansion*))
+                (cons '* (loop for i below (abs (caddr e)) collect
+                            (if (< (caddr e) 0)
+                                `(expt ,(cadr e) -1)
+                                (cadr e))))
+                e)))
+
 (def-expr-cond expand-mul e ;; (* (+ ...) (+ ...)) => (+ (* ...) (* ...))
   :op (* (let* ((args (cdr e))
-                (plus (mapcar #'cdr (filter-func '+ args)))
+                (plus (mapcar #'cdr (mapcar #'collect-exprs (filter-func '+ args))))
                 (notplus (filter-func '+ args t)))
-           (labels ((comb (ls)
-                      (if (cadr ls)
-                          (mapcan
-                            (lambda (r)
-                              (mapcar
-                                (lambda (x)
-                                  (cons x r))
-                                (car ls)))
-                            (comb (cdr ls)))
-                          (copy-list (mapcar #'list (car ls))))))
-             (if plus
-                 (cons '+ (mapcan
-                            (lambda (x)
-                              (let ((res (if (cdr x)
-                                             (extract-nums (collect-expt `(* ,@x)))
-                                             x)))
-                                (if (mequal 0 res)
-                                    nil
-                                    (list res))))
-                            (copy-list
-                              (mapcar
-                                (lambda (x)
-                                  `(,@notplus ,@x))
-                                (comb plus)))))
-                 e)))))
+           (if plus
+               (cons '+
+                 (labels ((comb (l1 l2)
+                            (loop for x in l1 append
+                               (loop for y in l2 collect (cons y x))))
+                          (comb-all (l)
+                            (if (cdr l)
+                                (comb-all (copy-tree (cons (comb (car l) (cadr l)) (cddr l))))
+                                (car l))))
+                   (loop for x in (comb-all (cons (list nil) plus)) collect
+                     (collect-exprs (cons '* (concatenate 'list notplus x))))))
+               e))))
 
 (def-expr-cond collect-common-nums e ;; (+ (* 2 x) (* 4 y)) => (* 2 (+ x (* 2 y)))
   :op (+ (let* ((nums (mapcar
@@ -753,7 +753,9 @@
                        (apply #'min degs)
                        (if (cdr degs)
                            0
-                           (car degs))))
+                           (if degs
+                               (car degs)
+                               0))))
            (eargs (mapcar
                     (lambda (de)
                       (let ((dg (caar de))
@@ -797,15 +799,51 @@
                       (car nee-args)
                       0))))))
 
-(defun extract-subexpr (e subex) ;; normailze -> extract-subexpr-norm -> denormalize
-  (multiple-value-bind (n e1 e2) (extract-subexpr-norm (math-rec-funcall #'norm-expr e) (math-rec-funcall #'norm-expr subex))
-    (if (mequal n 0)
-        (values 0 0 e)
-        (labels ((den (e)
-                   (chain-func-rec (extract-nums denorm-expr) e)))
-          (values (den n)
-                  (den e1)
-                  (den e2))))))
+(defun extract-subexpr (e subex &key expand) ;; normailze -> extract-subexpr-norm -> denormalize, if expant is T, expand all muls
+  (let* ((en (math-rec-funcall #'norm-expr e))
+         (en (if expand
+                 (math-rec-funcall #'extract-nums
+                   (math-rec-funcall #'collect-exprs
+                     (math-rec-funcall #'expand-mul
+                       (math-rec-funcall #'expand-int-expt
+                         (math-rec-funcall #'extract-nums
+                           (math-rec-funcall #'collect-exprs
+                             (math-rec-funcall #'extract-nums
+                               (math-rec-funcall #'collect-expt
+                                 (math-rec-funcall #'expand-expt2
+                                  (math-rec-funcall #'expand-expt1
+                                    (math-rec-funcall #'collect-exprs en)))))))))))
+                 en))
+         (en (if expand
+                 (math-rec-funcall #'extract-nums (cons (car en) (mapcar #'collect-expt (cdr en))))
+                 en))
+         (sn (math-rec-funcall #'norm-expr subex))
+         (sn (if expand
+                 (math-rec-funcall #'extract-nums
+                   (math-rec-funcall #'collect-exprs
+                     (math-rec-funcall #'expand-mul
+                       (math-rec-funcall #'expand-int-expt
+                         (math-rec-funcall #'extract-nums
+                           (math-rec-funcall #'collect-exprs
+                             (math-rec-funcall #'extract-nums
+                               (math-rec-funcall #'collect-expt
+                                 (math-rec-funcall #'expand-expt2
+                                  (math-rec-funcall #'expand-expt1
+                                    (math-rec-funcall #'collect-exprs sn)))))))))))
+                 sn))
+         (sn (if (and expand (listp sn))
+                 (math-rec-funcall #'extract-nums (cons (car en) (mapcar #'collect-expt (cdr sn))))
+                 sn)))
+    (log:info en sn)
+    (multiple-value-bind (n e1 e2) (extract-subexpr-norm en sn)
+      (if (mequal n 0)
+          (values 0 0 e)
+          (labels ((den (e)
+                     (funcall (if expand #'simplify #'identity)
+                              (chain-func-rec (extract-nums denorm-expr) e))))
+            (values (den n)
+                    (den e1)
+                    (den e2)))))))
 
 (defun collect-one-common (e) ;; extract one most common expression from e. Don't ever try to improve, if not understand it completely.
   (if (isfunc '+ e)
@@ -975,20 +1013,21 @@
       expr))
 
 (defun-stable-expr simplify-expr3 (e) ;; Simplify normalized expression
-;  (chain-debug
-    (math-rec-funcall #'extract-nums
-      (math-rec-funcall #'collect-same-expts
-        (math-rec-funcall #'collect-expt
-          (collect-common
-            (math-rec-funcall #'extract-nums
-              (math-rec-funcall #'expand-mul
+  ;;(chain-debug
+  (math-rec-funcall #'extract-nums
+    (math-rec-funcall #'collect-same-expts
+      (math-rec-funcall #'collect-expt
+        (collect-common
+          (math-rec-funcall #'extract-nums
+            (math-rec-funcall #'expand-mul
+              (math-rec-funcall #'expand-int-expt
                 (math-rec-funcall #'extract-nums
                   (math-rec-funcall #'collect-exprs
                     (math-rec-funcall #'extract-nums
                       (math-rec-funcall #'collect-expt
                         (math-rec-funcall #'expand-expt2
                          (math-rec-funcall #'expand-expt1
-                           (math-rec-funcall #'collect-exprs e))))))))))))))
+                           (math-rec-funcall #'collect-exprs e)))))))))))))))
 
 (defparameter *simplify-cache* (list))
 
