@@ -22,12 +22,14 @@ The simplification algorithm is rather complicated, it contains the following ma
 3. Term reduction is performed for divisions and subtraction
 4. Bracketing common factors performed. Most common factors are extracted first
 
-`(extract-subexpr expr subexpr)` function can be used to isolate specific subexpression. It will convert the `expr` into the form `(subexpr^n)*e1+e2`, and return `(values n e1 e2)`. If it cannot isolate the `subexpr`, it will return `(values 0 0 expr)`.
+`(extract-subexpr expr subexpr &key expand)` function can be used to isolate specific subexpression. It will convert the `expr` into the form `(subexpr^n)*e1+e2`, and return `(values n e1 e2)`. If it cannot isolate the `subexpr`, it will return `(values 0 0 expr)`. If the `expand` is set to `T`, the `expr` and `subexpr` will be transformed to have a better chance for extraction.
 This function is a very simple utility function and does not perform any transformations to solve the equation, the `subexpr` must be present in the `expr` more or less explicitly:
 
 ```
 (extract-subexpr '(+ (sqrt x) 1) 'x) ;; will return (values 1/2 1 1)
 (extract-subexpr '(+ (sqrt (+ x y)) 1) '(+ x y)) ;; will also return (values 1/2 1 1)
 ```
+
+`(get-polynome-cfs expr subexpr &key expand)` returns a plist like `((0 . cf0) (1 . cf1) ...)` where `сf0`, `cf1`, etc is a polynomial coefficients of `expr` against `subexpr`.
 
 **WARNING:** The library is in beta stage, it may be buggy, please don't rely on it completely, always test results for validity!
