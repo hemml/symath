@@ -1,6 +1,6 @@
 (defpackage :symath
   (:use cl)
-  (:export simplify array-multiply extract-subexpr get-polynome-cfs))
+  (:export simplify array-multiply extract-subexpr get-polynome-cfs replace-subexpr split-to-subexprs with-var-cnt-reset))
 
 (in-package :symath)
 
@@ -1053,3 +1053,113 @@
     (if (arrayp e1)
         (map-array #'simplify-expr2 e1)
         (simplify-expr2 e1))))
+
+(defun count-subexprs (e &key (hash (make-hash-table)))
+  (labels ((asc (e)
+             (let ((v (gethash e hash)))
+               (if v
+                   (values e v)
+                   (maphash (lambda (k v)
+                              (when (equal-expr e k)
+                                (return-from asc (values k v))))
+                            hash))
+               nil))
+           (find-se (e &optional no-variants)
+             (when (listp e)
+               (multiple-value-bind (k v) (asc e)
+                 (if k
+                     (setf (gethash k hash) (1+ v))
+                     (progn
+                       (setf (gethash e hash) 1)
+                       (when (not no-variants)
+                         (if (or (equal (car e) '*)
+                                 (equal (car e) '+))
+                             (loop for se in (symath::all-list-decs (cdr e) :max (1- (length (cdr e))))
+                               if (cdr se) do (find-se (cons (car e) se) t)
+                                  else do (find-se (car se))
+                               (cdr e))
+                             (map nil #'find-se (cdr e))))))))))
+    (find-se e)
+    hash))
+
+(defun replace-subexpr (e e1 e2)
+  (let ((cnt 0))
+    (labels ((rep-e-args (args &optional es (rem-e (cdr e1)))
+               (if (not rem-e)
+                   (progn
+                     (incf cnt)
+                     (cons e2 (rep-e-args args)))
+                   (if args
+                       (let ((pos (position (car args) rem-e :test #'equal-expr)))
+                         (if pos
+                             (rep-e-args (cdr args) (cons (car args) es) (append (subseq rem-e 0 pos) (subseq rem-e (1+ pos))))
+                             (cons (car args) (rep-e-args (cdr args) es rem-e))))
+                       es)))
+             (rep-e (e)
+               (if (symath::equal-expr e e1)
+                   (progn
+                     (incf cnt)
+                     e2)
+                   (if (listp e)
+                       (cons (car e)
+                             (if (and (listp e1)
+                                      (equal (car e) (car e1))
+                                      (or (equal '+ (car e))
+                                          (equal '* (car e))))
+                                 (rep-e-args (mapcar #'rep-e (cdr e)))
+                                 (mapcar #'rep-e (cdr e))))
+                       e))))
+      (values (rep-e e) cnt))))
+
+(defvar *tmp-cnt* 0)
+(defun gen-tmp-var (&rest args)
+  (declare (ignore args))
+  (intern (format nil "tmp~A" (incf *tmp-cnt*))))
+
+(defmacro with-var-cnt-reset (&rest code)
+  `(let ((*tmp-cnt* 0))
+     ,@code))
+
+(defun split-to-subexprs (vcs &key temps (min-weight 0) (gen-tmp #'gen-tmp-var) subst-self)
+  (labels ((apply-reps (e reps)
+              (if reps
+                  (apply-reps (replace-subexpr e (cdar reps) (caar reps))
+                              (cdr reps))
+                  e))
+           (apply-reps-ve (reps)
+             (lambda (ve)
+               (cons (car ve) (apply-reps (cdr ve) reps))))
+           (simp (ve)
+             (cons (car ve) (simplify (cdr ve))))
+           (rep-exs (el rpl tmps)
+             (if rpl
+                 (let ((te (apply-reps (car rpl) tmps)))
+                   (if (and (listp te) (or (= 0 min-weight) (> (expr-weight te) min-weight)))
+                       (let* ((tve (cons (funcall gen-tmp te) te))
+                              (ltve (list tve)))
+                         (multiple-value-call #'rep-exs
+                           (mapcar (apply-reps-ve ltve) el)
+                           (cdr rpl)
+                           (cons tve tmps)))
+                       (multiple-value-call #'rep-exs el (cdr rpl) tmps)))
+                 (values (append (mapcar #'simp (reverse tmps))
+                                 (mapcar #'simp el))
+                         (mapcar #'car tmps)))))
+    (let* ((hs (make-hash-table))
+           (vcs (mapcar (apply-reps-ve temps) vcs))
+           (vcs (if subst-self
+                    (labels ((rep (vl &optional rl)
+                               (if vl
+                                   (cons (cons (caar vl) (apply-reps (cdar vl) rl))
+                                         (rep (cdr vl) (cons (car vl) rl))))))
+                      (rep vcs))
+                    vcs)))
+      (mapcar (lambda (e) (count-subexprs (cdr e) :hash hs)) vcs)
+      (multiple-value-call #'rep-exs
+        vcs
+        (mapcar #'car (sort (loop for k being the hash-key of hs and v being the hash-value of hs
+                                   when (and (> v 1) (or (= 0 min-weight) (> (expr-weight k) min-weight)))
+                                   collect (cons k v))
+                            #'>
+                            :key #'cdr))
+        temps))))

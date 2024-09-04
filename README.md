@@ -32,4 +32,15 @@ This function is a very simple utility function and does not perform any transfo
 
 `(get-polynome-cfs expr subexpr &key expand)` returns a plist like `((0 . cf0) (1 . cf1) ...)` where `сf0`, `cf1`, etc is a polynomial coefficients of `expr` against `subexpr`. The `expand` argument works in the same way as in `extract-subexpr`. **NB**: The resulting alist will contain only nonzero coefficients!
 
+`(replace-subexpr e e1 e2)` - find and replace all occurrences of expression `e1` in expression `e` and replace them to `e1`, returning the modified expression. The second returned value will be number of replacements. The expression `e1` must be explicitly present in `e` to be replaced, but the function can find and replace, for example, a subexpression `(+ c d)` in `(+ a b c d e)`.
+
+`(split-to-subexprs vcs &key temps (min-weight 0) (gen-tmp #'symath::gen-tmp-var) subst-self)` - extract most common subexpressions from equation system `vcs` and replace them to temporary variables.
+The equation system must be in alist form: `((var1 . expr1) (var2 . expr2) ...)`. The function will return an extended equation system like: `((tmp1 . tmp-expr1) (tmp2 . tmp-expr2) ... (var1 . expr1) (var2 . expr2) ...)` where `tmp1...` are symbols (by default) representing temporary variables, holding subexpressions, which occurs multiple times in the original system. The second returned values will be a list of temporary variables. The `min-weight` parameter is a minimal "weight" of the expression to be moved into a temporary variable (see `symath::expr-weight` for details). The `gen-tmp` parameter is a function of single argument, which must return an unique object (a symbol, for example) which will be a new temporary variable. The function will get an expression as a parameter. If `subst-self` is `T` the function will substitute original variables in expressions, which has the same subexpressions inside. **WARNING:** Use with great caution if your equation system is self-depended or can have multiple assignments for the same variable.
+
+The default `gen-tmp` will be the function inside `symath` package, which returns unique interned symbols with names like `symath::tmpXXXX` where `XXXX` is an unique number, increasing each time. To reset the counter before execution of your program, use the following macro:
+```
+(with-var-cnt-reset
+  (split-to-subexprs ...))
+```
+
 **WARNING:** The library is in beta stage, it may be buggy, please don't rely on it completely, always test results for validity!
