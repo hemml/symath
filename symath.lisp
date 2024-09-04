@@ -834,7 +834,6 @@
          (sn (if (and expand (listp sn))
                  (math-rec-funcall #'extract-nums (cons (car en) (mapcar #'collect-expt (cdr sn))))
                  sn)))
-    (log:info en sn)
     (multiple-value-bind (n e1 e2) (extract-subexpr-norm en sn)
       (if (mequal n 0)
           (values 0 0 e)
