@@ -2,7 +2,7 @@
 
 A simple (and rather fast) symbolic math package for Common Lisp. I'm using it in my CFD-code generation project (not published yet), where it deals with huge expressions with thousands of terms, sometimes reducing their sizes to dozens of terms.
 
-This is a really simple package, which implements just `(symplify expr)` and `(extract-subexpr expr subexpr)` functions. Here `expr` and `subexpr` is an algebraic expressions like `'(/ (+ a b) a)`, a simplified version will be returned.
+This is a really simple package, contains mostly the `(symplify expr)` function. Here `expr` is an algebraic expressions like `'(/ (+ a b) a)`, a simplified version will be returned.
 
 Expression can contain numbers, symbols, subexpressions (functions) and arrays. 1D arrays will be treated as vectors, square 2D arrays as matrices. Matrices and vectors can be multiplied to numbers and other vectors/matrices. The method `(array-multiply x y)` is exported, overload it to implement tensor multiplication or something else.
 
