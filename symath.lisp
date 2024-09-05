@@ -1121,45 +1121,56 @@
      ,@code))
 
 (defun split-to-subexprs (vcs &key temps (min-weight 0) (gen-tmp #'gen-tmp-var) subst-self)
-  (labels ((apply-reps (e reps)
-              (if reps
-                  (apply-reps (replace-subexpr e (cdar reps) (caar reps))
-                              (cdr reps))
-                  e))
-           (apply-reps-ve (reps)
-             (lambda (ve)
-               (cons (car ve) (apply-reps (cdr ve) reps))))
-           (simp (ve)
-             (cons (car ve) (simplify (cdr ve))))
-           (rep-exs (el rpl tmps)
-             (if rpl
-                 (let ((te (apply-reps (car rpl) tmps)))
-                   (if (and (listp te) (or (= 0 min-weight) (> (expr-weight te) min-weight)))
-                       (let* ((tve (cons (funcall gen-tmp te) te))
-                              (ltve (list tve)))
-                         (multiple-value-call #'rep-exs
-                           (mapcar (apply-reps-ve ltve) el)
-                           (cdr rpl)
-                           (cons tve tmps)))
-                       (multiple-value-call #'rep-exs el (cdr rpl) tmps)))
-                 (values (append (mapcar #'simp (reverse tmps))
-                                 (mapcar #'simp el))
-                         (mapcar #'car tmps)))))
-    (let* ((hs (make-hash-table))
-           (vcs (mapcar (apply-reps-ve temps) vcs))
-           (vcs (if subst-self
-                    (labels ((rep (vl &optional rl)
-                               (if vl
-                                   (cons (cons (caar vl) (apply-reps (cdar vl) rl))
-                                         (rep (cdr vl) (cons (car vl) rl))))))
-                      (rep vcs))
-                    vcs)))
-      (mapcar (lambda (e) (count-subexprs (cdr e) :hash hs)) vcs)
-      (multiple-value-call #'rep-exs
-        vcs
-        (mapcar #'car (sort (loop for k being the hash-key of hs and v being the hash-value of hs
-                                   when (and (> v 1) (or (= 0 min-weight) (> (expr-weight k) min-weight)))
-                                   collect (cons k v))
-                            #'>
-                            :key #'cdr))
-        temps))))
+  (let ((orig-vrs (mapcar #'car vcs)))
+    (labels ((apply-reps (e reps)
+                (if reps
+                    (apply-reps (replace-subexpr e (cdar reps) (caar reps))
+                                (cdr reps))
+                    e))
+             (apply-reps-ve (reps)
+               (lambda (ve)
+                 (cons (car ve) (apply-reps (cdr ve) reps))))
+             (simp (ve)
+               (cons (car ve) (simplify (cdr ve))))
+             (rep-exs (el rpl tmps)
+               (if rpl
+                   (let ((te (apply-reps (car rpl) tmps)))
+                     (if (and (listp te) (or (= 0 min-weight) (> (expr-weight te) min-weight)))
+                         (let* ((tve (cons (funcall gen-tmp te) te))
+                                (ltve (list tve)))
+                           (multiple-value-call #'rep-exs
+                             (mapcar (apply-reps-ve ltve) el)
+                             (cdr rpl)
+                             (cons tve tmps)))
+                         (multiple-value-call #'rep-exs el (cdr rpl) tmps)))
+                   (values (append (mapcar #'simp (reverse tmps))
+                                   (mapcar #'simp el))
+                           (mapcar #'car tmps))))
+             (orig-dep (e)
+               (if (position e orig-vrs :test #'equal-expr)
+                   (return-from orig-dep t)
+                   (if (listp e)
+                       (map nil (lambda (e)
+                                  (when (orig-dep e)
+                                    (return-from orig-dep t)))
+                                (cdr e))))))
+      (let* ((hs (make-hash-table))
+             (vcs (mapcar (apply-reps-ve temps) vcs))
+             (vcs (if subst-self
+                      (labels ((rep (vl &optional rl)
+                                 (if vl
+                                     (cons (cons (caar vl) (apply-reps (cdar vl) rl))
+                                           (rep (cdr vl) (cons (car vl) rl))))))
+                        (rep vcs))
+                      vcs)))
+        (mapcar (lambda (e) (count-subexprs (cdr e) :hash hs)) vcs)
+        (multiple-value-call #'rep-exs
+          vcs
+          (mapcar #'car (sort (loop for k being the hash-key of hs and v being the hash-value of hs
+                                     when (and (> v 1)
+                                               (or (= 0 min-weight) (> (expr-weight k) min-weight))
+                                               (not (orig-dep k)))
+                                     collect (cons k v))
+                              #'>
+                              :key #'cdr))
+          temps)))))
