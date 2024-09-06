@@ -1173,4 +1173,4 @@
                                      collect (cons k v))
                               #'>
                               :key #'cdr))
-          temps)))))
+          (reverse temps))))))
