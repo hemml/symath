@@ -1145,7 +1145,7 @@
                          (multiple-value-call #'rep-exs el (cdr rpl) tmps)))
                    (values (append (mapcar #'simp (reverse tmps))
                                    (mapcar #'simp el))
-                           (mapcar #'car tmps))))
+                           (reverse (mapcar #'car tmps)))))
              (orig-dep (e)
                (if (position e orig-vrs :test #'equal-expr)
                    (return-from orig-dep t)
