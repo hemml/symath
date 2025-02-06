@@ -1,5 +1,5 @@
 (defpackage :symath
-  (:use cl)
+  (:use cl alexandria)
   (:export simplify array-multiply extract-subexpr get-polynome-cfs replace-subexpr split-to-subexprs with-var-cnt-reset))
 
 (in-package :symath)
@@ -86,13 +86,6 @@
                                            ((isfunc '* v2) `(* ,v1 ,@(cdr v2)))
                                            (t `(* ,v1 ,v2)))))))))))
         (t (error "The '*' operator can be used only for multiplication of vector/matrix to constant or to multiply square matrices. Overload #'array-multiply to extend it."))))
-
-
-(defmacro if-let (varexpr r1 &optional r2)
-  `(let ((,(car varexpr) ,(cadr varexpr)))
-     (if ,(car varexpr)
-         ,r1
-         ,r2)))
 
 (defun tick ())
 
@@ -318,11 +311,11 @@
                                     (remove-if #'numberp (cdr e))))
                           (count-pm (l1 l2 &key (nm 0))
                             (if (and l1 l2)
-                                (if-let (pos (position (car l1) l2 :test #'equal-expr))
+                                (if-let ((pos (position (car l1) l2 :test #'equal-expr)))
                                   (count-pm (cdr l1)
                                             (append (subseq l2 0 pos) (subseq l2 (+ pos 1)))
                                             :nm nm)
-                                  (if-let (pos (position (car l1) l2 :test #'equal-expr-1))
+                                  (if-let ((pos (position (car l1) l2 :test #'equal-expr-1)))
                                     (count-pm (cdr l1)
                                               (append (subseq l2 0 pos) (subseq l2 (+ pos 1)))
                                               :nm (+ nm 1))
@@ -582,9 +575,9 @@
              (labels ((process-arg (e)
                         (let ((e1 (if (isfunc 'expt e) (cadr e) e))
                               (d (if (isfunc 'expt e) (caddr e) 1)))
-                          (if-let (r (assoc e1 args :test #'equal-expr))
+                          (if-let ((r (assoc e1 args :test #'equal-expr)))
                             (setf (cdr r) `(+ ,(cdr r) ,d))
-                            (if-let (r (assoc e1 args :test #'equal-expr-1))
+                            (if-let ((r (assoc e1 args :test #'equal-expr-1)))
                               (progn
                                 (setf (cdr r) `(+ ,(cdr r) ,d))
                                 (setf cf (* cf -1)))
@@ -717,7 +710,7 @@
                    (isfunc '* x))
               (map nil
                 (lambda (x1)
-                  (if-let (res (get-deg x1 :in-mul t))
+                  (if-let ((res (get-deg x1 :in-mul t)))
                     (return-from get-deg res)))
                 (cdr x))))))
     (let* ((args (if (isfunc '+ e)
@@ -861,7 +854,7 @@
            (if (not (numberp e1))
              (labels ((inc-hash-test (e)
                         (if (not (numberp e))
-                            (if-let (vk (rassoc e ecnt-l :test eqf))
+                            (if-let ((vk (rassoc e ecnt-l :test eqf)))
                                     (pushnew nt (car vk))
                                     (push (cons (list nt) e) ecnt-l)))))
                (map nil
@@ -1041,7 +1034,7 @@
   (setf *simplify-cache* (list)))
 
 (defun simplify-expr2 (e) ;; normalize -> simplify -> denormalize
-  (if-let (r (assoc e *simplify-cache* :test #'equal-expr))
+  (if-let ((r (assoc e *simplify-cache* :test #'equal-expr)))
     (cdr r)
     (let ((res (math-rec-funcall #'denorm-expr
                  (simplify-expr3 (math-rec-funcall #'norm-expr e)))))

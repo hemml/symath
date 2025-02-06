@@ -5,7 +5,7 @@
   :licence "MIT"
   :homepage "https://github.com/hemml/symath"
   :source-control "https://github.com/hemml/symath.git"
-  :depends-on ()
+  :depends-on (alexandria)
   :components ((:static-file "README.md")
                (:static-file "LICENSE")
                (:file "symath")))
