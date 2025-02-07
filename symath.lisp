@@ -874,7 +874,20 @@
                            (mapcar
                              (lambda (x)
                                (cons '+ x))
-                             (all-list-decs (cdr e) :min 2 :max (length (cddr e)))))))
+                             (let ((sum-terms nil))
+                               (map nil
+                                 (lambda (e)
+                                   (when (isfunc '* e)
+                                     (map nil (lambda (e)
+                                                (when (isfunc '+ e)
+                                                  (map nil (lambda (e)
+                                                             (pushnew e sum-terms :test (disjoin #'equal-expr #'equal-expr-1)))
+                                                           (cdr e))))
+                                              (cdr e))))
+                                 (cdr e))
+                               (let ((terms (remove-if-not (rcurry #'find sum-terms :test (disjoin #'equal-expr #'equal-expr-1)) (cdr e))))
+                                 (when (cdr terms)
+                                   (all-list-decs terms :min 2 :max (max 2 (length terms))))))))))
           (if (= mxc 1)
               (map nil
                    #'count-expr
