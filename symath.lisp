@@ -1054,11 +1054,16 @@
       (push (cons e res) *simplify-cache*)
       res)))
 
-(defun simplify (e)
-  (let ((e1 (math-rec-funcall #'calc-arrays e)))
-    (if (arrayp e1)
-        (map-array #'simplify-expr2 e1)
-        (simplify-expr2 e1))))
+(defun simplify (e &key no-cache)
+  (labels ((simp ()
+              (let ((e1 (math-rec-funcall #'calc-arrays e)))
+                (if (arrayp e1)
+                    (map-array #'simplify-expr2 e1)
+                    (simplify-expr2 e1)))))
+    (if no-cache
+        (let ((*simplify-cache* nil))
+          (simp))
+        (simp))))
 
 (defun count-subexprs (e &key (hash (make-hash-table)))
   (labels ((asc (e)
