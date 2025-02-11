@@ -12,6 +12,7 @@ In the expressions some special functions can be used:
 - `(vector ...)` - construct a vector from arguments.
 - `(aref idx array)` - get array element.
 - `(exp x)` - an exponent
+- `(log x &optional b)` - a logarithm
 
 These functions can be transformed during simplification, all other functions will be kept as is (but their arguments will be simplified). Trigonometry functions support is planned, but not yet implemented.
 

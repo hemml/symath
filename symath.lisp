@@ -419,6 +419,9 @@
                           ((equal '&math-e (cadr e)) (exp (caddr e)))
                           (t e))
                     e)))
+  :op (log (cond ((mequal 1 (cadr e)) 0)
+                 ((equal-expr (cadr e) (caddr e)) 1)
+                 (t e)))
   :op (cast (if (numberp (caddr e))
                 (cond
                   ((equal 'real*8 (cadr e)) (float (caddr e)))
@@ -428,6 +431,13 @@
                      (if (= 0.0 r) f e)))
                   (t e))
                 e))
+  :op (log (if (numberp (cadr e))
+               (cond ((numberp (caddr e))
+                      (log (cadr e) (caddr e)))
+                     ((equal (cadr e) '&math-e)
+                      (log (cadr e)))
+                     (t e))
+               e))
   :defop (if (and (fboundp (car e))
                   (every #'numberp (cdr e)))
              (apply (car e) (cdr e))
@@ -446,6 +456,9 @@
                              -1)))
   :op (sqrt `(expt ,(cadr e) 1/2))
   :op (exp `(expt &math-e ,(cadr e)))
+  :op (log (if (cddr e)
+               e
+               `(log ,(cadr e) &math-e)))
   :op (expt (if (and (arrayp (cadr e))
                      (numberp (caddr e))
                      (evenp (caddr e))
@@ -491,7 +504,10 @@
                       (t e))
                 (if (equal '&math-e (cadr e))
                     `(exp ,(caddr e))
-                    e))))
+                    e)))
+  :op (log (if (equal (caddr e) '&math-e)
+               `(log ,(cadr e))
+               e)))
 
 (def-expr-cond denorm-expr-zop e ;; Replace every (* x) and (+ x) to x
   :op ((+ *) (if (cddr e)
@@ -792,6 +808,59 @@
                       (car nee-args)
                       0))))))
 
+(def-expr-cond extract-expt-log e ;; (expt a (* (log b a) x)) => (expt b x), (log (expt b x) b) => x
+  :op (expt (if (and (isfunc 'log (caddr e))
+                     (equal-expr (cadr e) (caddr (caddr e))))
+                (cadr e)
+                (if (isfunc '* (caddr e))
+                    (if-let ((pos (position-if (conjoin (curry #'isfunc 'log)
+                                                        (compose (curry #'equal-expr (cadr e)) #'caddr))
+                                               (cdr (caddr e)))))
+                      (let* ((margs (cdr (caddr e)))
+                             (margs2 (append (subseq margs 0 pos)
+                                             (subseq margs (1+ pos))))
+                             (mf (if (cdr margs2)
+                                     (cons '* margs2)
+                                     (car margs2))))
+                        `(expt ,(cadr (elt margs pos)) ,mf))
+                      e)
+                    e)))
+  :op (log (if (and (isfunc 'expt (cadr e))
+                    (equal-expr (caddr e) (cadr (cadr e))))
+               (caddr (cadr e))
+               e)))
+
+(def-expr-cond extract-logs e ;; (log (* x y)) => (+ (log x) (log y))
+  :op (log (if (isfunc '* (cadr e))
+               `(+ ,@(mapcar (compose (curry #'cons 'log) (rcurry #'cons (list (caddr e))))
+                             (cdr (cadr e))))
+               e)))
+
+(def-expr-cond extract-logs2 e ;; (log (expt x y)) => (* y (log x))
+  :op (log (if (isfunc 'expt (cadr e))
+               `(* ,(caddr (cadr e)) (log ,(cadr (cadr e)) ,(caddr e)))
+               e)))
+
+(def-expr-cond extract-logs3 e ;; (log x (expt a b)) => (* (/ 1 b) (log x a))
+  :op (log (if (isfunc 'expt (caddr e))
+               `(* (expt ,(caddr (caddr e)) -1) (log ,(cadr e) ,(cadr (caddr e))))
+               e)))
+
+(def-expr-cond collect-logs e ;; (+ (log x) (log y)) => (log (* x y))
+  :op (+ (let* ((logs (remove-if-not (curry #'isfunc 'log) (cdr e)))
+                (not-logs (remove-if (curry #'isfunc 'log) (cdr e)))
+                (bases (remove-duplicates (mapcar #'caddr logs) :test #'equal-expr)))
+            (if bases
+                `(+ ,@not-logs
+                    ,@(mapcar (lambda (b)
+                                (let ((logs (remove-if-not (compose (curry #'equal-expr b) #'caddr) logs)))
+                                  (if (cdr logs)
+                                      `(log (* ,@(mapcar #'cadr logs)) ,b)
+                                      (car logs))))
+
+                              bases))
+                e))))
+
 (defun extract-subexpr (e subex &key expand) ;; normailze -> extract-subexpr-norm -> denormalize, if expant is T, expand all muls
   (let* ((en (math-rec-funcall #'norm-expr e))
          (en (if expand
@@ -803,9 +872,14 @@
                            (math-rec-funcall #'collect-exprs
                              (math-rec-funcall #'extract-nums
                                (math-rec-funcall #'collect-expt
-                                 (math-rec-funcall #'expand-expt2
-                                  (math-rec-funcall #'expand-expt1
-                                    (math-rec-funcall #'collect-exprs en)))))))))))
+                                (math-rec-funcall #'collect-logs
+                                  (math-rec-funcall #'extract-expt-log
+                                    (math-rec-funcall #'extract-logs3
+                                      (math-rec-funcall #'extract-logs2
+                                        (math-rec-funcall #'extract-logs
+                                          (math-rec-funcall #'expand-expt2
+                                            (math-rec-funcall #'expand-expt1
+                                              (math-rec-funcall #'collect-exprs en))))))))))))))))
                  en))
          (en (if expand
                  (math-rec-funcall #'extract-nums (cons (car en) (mapcar #'collect-expt (cdr en))))
@@ -820,9 +894,14 @@
                            (math-rec-funcall #'collect-exprs
                              (math-rec-funcall #'extract-nums
                                (math-rec-funcall #'collect-expt
-                                 (math-rec-funcall #'expand-expt2
-                                  (math-rec-funcall #'expand-expt1
-                                    (math-rec-funcall #'collect-exprs sn)))))))))))
+                                 (math-rec-funcall #'collect-logs
+                                   (math-rec-funcall #'extract-expt-log
+                                     (math-rec-funcall #'extract-logs3
+                                       (math-rec-funcall #'extract-logs2
+                                         (math-rec-funcall #'extract-logs
+                                           (math-rec-funcall #'expand-expt2
+                                            (math-rec-funcall #'expand-expt1
+                                              (math-rec-funcall #'collect-exprs sn))))))))))))))))
                  sn))
          (sn (if (and expand (listp sn))
                  (math-rec-funcall #'extract-nums (cons (car en) (mapcar #'collect-expt (cdr sn))))
@@ -1037,9 +1116,14 @@
                   (math-rec-funcall #'collect-exprs
                     (math-rec-funcall #'extract-nums
                       (math-rec-funcall #'collect-expt
-                        (math-rec-funcall #'expand-expt2
-                         (math-rec-funcall #'expand-expt1
-                           (math-rec-funcall #'collect-exprs e)))))))))))))))
+                        (math-rec-funcall #'collect-logs
+                          (math-rec-funcall #'extract-expt-log
+                            (math-rec-funcall #'extract-logs3
+                              (math-rec-funcall #'extract-logs2
+                                (math-rec-funcall #'extract-logs
+                                  (math-rec-funcall #'expand-expt2
+                                    (math-rec-funcall #'expand-expt1
+                                      (math-rec-funcall #'collect-exprs e))))))))))))))))))))
 
 (defparameter *simplify-cache* (list))
 
