@@ -1,6 +1,6 @@
 (defpackage :symath
   (:use cl alexandria)
-  (:export simplify array-multiply extract-subexpr get-polynome-cfs replace-subexpr split-to-subexprs with-var-cnt-reset))
+  (:export simplify array-multiply extract-subexpr get-polynome-cfs replace-subexpr split-to-subexprs with-var-cnt-reset diff with-templates sqr with-constants))
 
 (in-package :symath)
 
@@ -129,11 +129,12 @@
 
 (defun sqr (x)
   "Multiple argument by itself. Works for vectors too!"
-  (if (arrayp x)
-      (if (cdr (array-dimensions x))
-          (array-multiply x x)
-          `(+ ,@(map 'list (lambda (x) `(expt ,x 2)) x)))
-      `(expt ,x 2)))
+  (cond ((numberp x) (* x x))
+        ((arrayp x)
+         (if (cdr (array-dimensions x))
+             (array-multiply x x)
+             `(+ ,@(map 'list (lambda (x) `(expt ,x 2)) x))))
+        (t `(expt ,x 2))))
 
 (defun math-rec-funcall (fn arg &optional deep)
   "Call the function fn recursively"
@@ -1125,18 +1126,189 @@
                                     (math-rec-funcall #'expand-expt1
                                       (math-rec-funcall #'collect-exprs e))))))))))))))))))))
 
+
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defparameter *internal-consts* '(&math-e)))
+
+(defparameter *templates* nil)
+
+(defmacro with-templates (templates &rest code)
+  (labels ((make-template (template code)
+             (with-gensyms (ca e res)
+               (let ((binded (make-hash-table)))
+                 (labels ((check-consts (path)
+                            `(or (numberp ,path)
+                                 (find ,path *internal-consts* :test #'equal-expr)))
+                                 ; ,@(mapcar (lambda (x ) `(equal ,path ',x)) *internal-consts*)))
+                          (get-params (el path code &key (first-el t))
+                            (if (not el)
+                                (lambda () `(if (not ,path) ,(funcall code)))
+                                (cond ((symbolp el)
+                                       (let* ((name (symbol-name el))
+                                              (fc (elt name 0))
+                                              (bind (and (case fc ((#\@ #\$ #\_) t))
+                                                         (> (length name) 1)))
+                                              (first-bind (not (gethash el binded)))
+                                              (code (if bind
+                                                        (if first-bind
+                                                            (progn
+                                                              (setf (gethash el binded) t)
+                                                              (lambda ()
+                                                                `(let ((,el ,path))
+                                                                   ,(funcall code))))
+                                                            (lambda ()
+                                                              `(if (equal-expr ,path ,el)
+                                                                   ,(funcall code))))
+                                                        code)))
+                                         (if (and bind (not first-bind))
+                                             code
+                                             (case fc
+                                               (#\@ (lambda () `(if ,(check-consts path) ,(funcall code))))
+                                               (#\_ (lambda () `(if (not ,(check-consts path)) ,(funcall code))))
+                                               (#\$ code)
+                                               (t (lambda () `(if (equal ,path ',el) ,(funcall code))))))))
+                                      ((listp el)
+                                       (let ((code (if (equal (car el) '&rest)
+                                                       (if (and (cdr el) (not (cddr el)))
+                                                           (lambda ()
+                                                             `(let ((,(cadr el) ,path))
+                                                                ,(funcall code)))
+                                                           (error (format nil "Invalid &rest construction in the template")))
+                                                       (let ((cd (if first-el
+                                                                     (gensym)
+                                                                     path)))
+                                                         (lambda ()
+                                                           `(let ((,ca (car ,path))
+                                                                  (,cd (cdr ,path)))
+                                                              (declare (ignorable ,ca ,cd))
+                                                              ,(funcall (get-params (car el) ca
+                                                                                    (get-params (cdr el) cd code :first-el nil)))))))))
+                                         (if first-el
+                                             (lambda ()
+                                               `(if (listp ,path)
+                                                    ,(funcall code)))
+                                             code)))
+                                      ((numberp el)
+                                       (lambda () `(if (mequal ,path ,el) ,(funcall code))))
+                                      (t (error (format nil "Invalid element in template: ~A" el)))))))
+                   `(lambda (,e)
+                      ,(funcall (get-params template e
+                                  (lambda ()
+                                    `(if-let ((,res ,code))
+                                       (values ,res t)))))))))))
+    `(let ((*templates*
+              (append *templates*
+                      (list ,@(mapcar (lambda (tmpl code)
+                                        (make-template tmpl `(progn ,@code)))
+                                      (mapcar #'car templates)
+                                      (mapcar #'cdr templates))))))
+       ,@code)))
+
+(defun apply-templates (e)
+  (let ((flg nil)
+        (flg1 nil)
+        (flg2 nil)
+        (rec-log nil))
+    (declare (special flg flg1 flg2 rec-log))
+    (labels ((tmplf (tmpl e)
+               (multiple-value-bind (e1 s) (funcall tmpl e)
+                 (setf flg (or flg s))
+                 (if s e1 e)))
+             (appl1 (e &key (tmpl *templates*) (deep 0))
+               (when (> deep 10000)
+                 (error "Too deep recursion while applying templates"))
+               (if tmpl
+                   (let ((flg nil))
+                     (declare (special flg))
+                     (let ((e (math-rec-funcall (curry #'tmplf (car tmpl)) e)))
+                       (setf flg1 (or flg1 flg))
+                       (appl1 e :tmpl (if flg tmpl (cdr tmpl)) :deep (1+ deep))))
+                   e))
+             (appl2 (e &key (deep 0))
+               (let ((flg1 nil))
+                 (declare (special flg1))
+                 (let ((e1 (appl1 e :deep (1+ deep))))
+                   (setf flg2 (or flg2 flg1))
+                   (if flg1
+                       (if (find e1 rec-log :test #'equal-expr)
+                           (error "Infinite loop while expanding templates")
+                           (progn
+                             (push e1 rec-log)
+                             (appl2 e1 :deep (1+ deep))))
+                       e))))
+             (appl3 (e &key (deep 0))
+               (let ((flg2 nil))
+                 (declare (special flg2))
+                 (let ((e1 (let ((rec-log nil))
+                             (declare (special rec-log))
+                             (appl2 (math-rec-funcall #'norm-expr (appl2 e :deep (1+ deep))) :deep (1+ deep)))))
+                   (if flg2
+                       (if (find e1 rec-log :test #'equal-expr)
+                           (error "Infinite loop while expanding templates")
+                           (progn
+                             (push e1 rec-log)
+                             (appl3 (math-rec-funcall #'denorm-expr e1) :deep (1+ deep))))
+                       e)))))
+      (appl3 e))))
+
+(defmacro with-constants (consts &rest code)
+  `(let ((*internal-consts* (append *internal-consts* ',consts)))
+     ,@code))
+
 (defparameter *simplify-cache* (list))
 
 (defun clear-simplify-cache ()
   (setf *simplify-cache* (list)))
 
+;; For the templates:
+;; @ -- a number (constant)
+;; _ -- not a number
+;; $ -- any expr
+
 (defun simplify-expr2 (e) ;; normalize -> simplify -> denormalize
-  (if-let ((r (assoc e *simplify-cache* :test #'equal-expr)))
-    (cdr r)
-    (let ((res (math-rec-funcall #'denorm-expr
-                 (simplify-expr3 (math-rec-funcall #'norm-expr e)))))
-      (push (cons e res) *simplify-cache*)
-      res)))
+  (with-templates (((diff @ $) 0)
+                   ((diff _1 _1) 1)
+                   ((diff (+ &rest args) _1)
+                    (cons '+ (mapcar (compose (curry #'cons 'diff) (rcurry #'list _1)) args)))
+                   ((diff (* &rest args) _1)
+                    `(+ (* (diff ,(car args) ,_1)
+                           ,@(cdr args))
+                        (* ,(car args)
+                           (diff ,(if (cddr args)
+                                      `(* ,@(cdr args))
+                                      (cadr args))
+                                 ,_1))))
+                   ((diff (exp $1) _2)
+                    `(* (exp ,$1) (diff ,$1 ,_2)))
+                   ((diff (expt $1 $2) _3)
+                    `(diff (exp (* ,$2 (log ,$1))) ,_3))
+                   ((diff (log $1) _2)
+                    `(/ (diff ,$1 ,_2) ,$1))
+                   ((diff (sin $1) _2)
+                    `(* (cos ,$1) (diff ,$1 ,_2)))
+                   ((diff (cos $1) _2)
+                    `(* -1 (sin ,$1) (diff ,$1 ,_2)))
+                   ((diff (tan $1) _2)
+                    `(/ (diff ,$1 ,_2) (expt (cos ,$1) 2)))
+                   ((diff (ctan $1) _2)
+                    `(* -1 (/ (diff ,$1 ,_2) (expt (sin ,$1) 2))))
+                   ((diff (asin $1) _2)
+                    `(/ (diff ,$1 ,_2) (sqrt (- 1 (expt $1 2)))))
+                   ((diff (acos $1) _2)
+                    `(* -1 (/ (diff ,$1 ,_2) (sqrt (- 1 (expt $1 2))))))
+                   ((diff (atan $1) _2)
+                    `(/ (diff ,$1 ,_2) (+ 1 (expt $1 2))))
+                   ((diff (actan $1) _2)
+                    `(* -1 (/ (diff ,$1 ,_2) (+ 1 (expt $1 2))))))
+    (if-let ((r (assoc e *simplify-cache* :test #'equal-expr)))
+      (cdr r)
+      (let ((res (math-rec-funcall #'denorm-expr
+                   (simplify-expr3
+                     (math-rec-funcall #'norm-expr
+                        (apply-templates e))))))
+        (push (cons e res) *simplify-cache*)
+        res))))
 
 (defun simplify (e &key no-cache)
   (labels ((simp ()

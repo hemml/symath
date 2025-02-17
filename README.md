@@ -2,7 +2,7 @@
 
 A simple (and rather fast) symbolic math package for Common Lisp. I'm using it in my CFD-code generation project (not published yet), where it deals with huge expressions with thousands of terms, sometimes reducing their sizes to dozens of terms.
 
-This is a really simple package, contains mostly the `(symplify expr)` function. Here `expr` is an algebraic expressions like `'(/ (+ a b) a)`, a simplified version will be returned.
+This is a really simple package, contains mostly the `(symplify expr &key no-cache)` function. Here `expr` is an algebraic expressions like `'(/ (+ a b) a)`, a simplified version will be returned. If `:no-cache t` is specified, the caching will be disabled (useful for debugging).
 
 Expression can contain numbers, symbols, subexpressions (functions) and arrays. 1D arrays will be treated as vectors, square 2D arrays as matrices. Matrices and vectors can be multiplied to numbers and other vectors/matrices. The method `(array-multiply x y)` is exported, overload it to implement tensor multiplication or something else.
 
@@ -13,15 +13,63 @@ In the expressions some special functions can be used:
 - `(aref idx array)` - get array element.
 - `(exp x)` - an exponent
 - `(log x &optional b)` - a logarithm
+- `(diff expr var)` - a differentiation, see below
 
 These functions can be transformed during simplification, all other functions will be kept as is (but their arguments will be simplified). Trigonometry functions support is planned, but not yet implemented.
+
+## Differentiation
+
+You can differentiate expressions with `(diff expr1 var)` function with `simplify`:
+```
+  (simplify '(diff (exp (cos x)) x))
+  => (* -1 (EXP (COS X)) (SIN X))
+```
+
+The simplification algorithm knows how to differentiate the following functions: `+ - * / exp expt log sin cos tan ctan asyn acos atan actan`. Any other functions will be left under the `diff`:
+```
+  (simplify '(diff (exp (foo x)) x))
+  (* (EXP (FOO X)) (DIFF (FOO X) X))
+```
+But you can add a differentiation rule for your function using the `with-templates` macro:
+```
+  (with-templates (((diff (foo $1) $2) `(exp (* ,$1 ,$2))))
+    (simplify '(diff (exp (foo x)) x) :no-cache t))
+  => (EXP (+ (FOO X) (EXPT X 2)))
+```
+The first argument of `with-templates` is a list of templates. Each template must have the following form:
+```
+(pattern &rest code)
+```
+The pattern is an expression, where the special symbols denote:
+- `$XX` - any expression, may be $1, $aaa, etc. All the `$`-symbols, except the single `$` can be referred in the code as variables.
+- `@XX` - a number or a constant (see below)
+- `_XX` - not a number/constant
+- `&rest var` - keep the rest terms in the `var`, like: `(+ &rest args)`
+
+The code must return an expression to replace the template. All templates are applied recursively while it is possible to find any pattern in the expression. While debugging your templates you can use `:no-cache t` while calling the `simplify`, to prevent caching wrong results.
+
+You can specify some variables as a constants with `with-constants` macro:
+```
+  (simplify '(diff (expt x y) x))
+  => (* (+ (* (DIFF Y X) (LOG X)) (/ Y X)) (EXPT X Y))
+  (with-constants (y) (simplify '(diff (expt x y) x) :no-cache t))
+  => (* Y (EXPT X (- Y 1)))
+```
+
+Feel free to contribute your diff-templates for specific functions, via issues or pull requests on the github repository.
+
+## How it works
 
 The simplification algorithm is rather complicated, it contains the following main steps:
 
 1. All vectoir/matrix operations (if any) are implemented, producing final vector/marix, and each element is simplified separately
-2. All functions with numeric arguments are computed, where possible
-3. Term reduction is performed for divisions and subtraction
-4. Bracketing common factors performed. Most common factors are extracted first
+2. Templates are applied
+3. The expression is normalized - all subtractions like (- a b c ...) are replaced to (+ a (* -1 (+ b c ...))) and divisions like (/ a b) to (* a (expt b -1))
+4. All functions with numeric arguments are computed, where possible
+5. Term reduction is performed for divisions and subtraction
+6. Bracketing common factors performed. Most common factors are extracted first
+7. Repeat 4-6 until the result is stabilized
+6. The result is denormailzed - all subtractions and divisions are returned back
 
 `(extract-subexpr expr subexpr &key expand)` function can be used to isolate specific subexpression. It will convert the `expr` into the form `(subexpr^n)*e1+e2`, and return `(values n e1 e2)`. If it cannot isolate the `subexpr`, it will return `(values 0 0 expr)`. If the `expand` is set to `T`, the `expr` and `subexpr` will be transformed to have a better chance for extraction - all brackets will be opened in `e1` and `e2`.
 This function is a very simple utility function and does not perform any transformations to solve the equation, the `subexpr` must be present in the `expr` more or less explicitly:
