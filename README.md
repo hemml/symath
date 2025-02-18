@@ -1,5 +1,8 @@
 # symath
 
+**WARNING:** The library is in beta stage, it may be buggy, please don't rely on it completely, always test results for validity!
+
+
 A simple (and rather fast) symbolic math package for Common Lisp. I'm using it in my CFD-code generation project (not published yet), where it deals with huge expressions with thousands of terms, sometimes reducing their sizes to dozens of terms.
 
 This is a really simple package, contains mostly the `(symplify expr &key no-cache)` function. Here `expr` is an algebraic expressions like `'(/ (+ a b) a)`, a simplified version will be returned. If `:no-cache t` is specified, the caching will be disabled (useful for debugging).
@@ -30,11 +33,15 @@ The simplification algorithm knows how to differentiate the following functions:
   (simplify '(diff (exp (foo x)) x))
   (* (EXP (FOO X)) (DIFF (FOO X) X))
 ```
-But you can add a differentiation rule for your function using the `with-templates` macro:
+But you can add a differentiation rule for your function using the `with-templates` macro. Here you can see, how to use a finite difference (a central one with the step `delta`) for the `foo` function:
 ```
-  (with-templates (((diff (foo $1) $2) `(exp (* ,$1 ,$2))))
+  (with-templates (((diff (foo $1) $2)
+                    `(/ (- (foo ,(replace-subexpr $1 $2 `(+ ,$2 delta)))
+                           (foo ,(replace-subexpr $1 $2 `(- ,$2 delta))))
+                        (* 2 delta))))
     (simplify '(diff (exp (foo x)) x) :no-cache t))
-  => (EXP (+ (FOO X) (EXPT X 2)))
+  => (/ (* (- (* 1/2 (FOO (+ X DELTA))) (* 1/2 (FOO (- X DELTA)))) (EXP (FOO X)))
+     DELTA)
 ```
 The first argument of `with-templates` is a list of templates. Each template must have the following form:
 ```
@@ -46,7 +53,7 @@ The pattern is an expression, where the special symbols denote:
 - `_XX` - not a number/constant
 - `&rest var` - keep the rest terms in the `var`, like: `(+ &rest args)`
 
-The code must return an expression to replace the template. All templates are applied recursively while it is possible to find any pattern in the expression. While debugging your templates you can use `:no-cache t` while calling the `simplify`, to prevent caching wrong results.
+The code must return an expression to replace the template or `NIL` to skip the replacement (you can perform any checks in the code to ensure what the expression is really satisfying your pattern). All templates are applied recursively while it is possible to find any pattern in the expression. While debugging your templates you can use `:no-cache t` while calling the `simplify`, to prevent caching wrong results.
 
 You can specify some variables as a constants with `with-constants` macro:
 ```
@@ -58,18 +65,7 @@ You can specify some variables as a constants with `with-constants` macro:
 
 Feel free to contribute your diff-templates for specific functions, via issues or pull requests on the github repository.
 
-## How it works
-
-The simplification algorithm is rather complicated, it contains the following main steps:
-
-1. All vectoir/matrix operations (if any) are implemented, producing final vector/marix, and each element is simplified separately
-2. Templates are applied
-3. The expression is normalized - all subtractions like (- a b c ...) are replaced to (+ a (* -1 (+ b c ...))) and divisions like (/ a b) to (* a (expt b -1))
-4. All functions with numeric arguments are computed, where possible
-5. Term reduction is performed for divisions and subtraction
-6. Bracketing common factors performed. Most common factors are extracted first
-7. Repeat 4-6 until the result is stabilized
-6. The result is denormailzed - all subtractions and divisions are returned back
+## Extracting a subexpression(s)
 
 `(extract-subexpr expr subexpr &key expand)` function can be used to isolate specific subexpression. It will convert the `expr` into the form `(subexpr^n)*e1+e2`, and return `(values n e1 e2)`. If it cannot isolate the `subexpr`, it will return `(values 0 0 expr)`. If the `expand` is set to `T`, the `expr` and `subexpr` will be transformed to have a better chance for extraction - all brackets will be opened in `e1` and `e2`.
 This function is a very simple utility function and does not perform any transformations to solve the equation, the `subexpr` must be present in the `expr` more or less explicitly:
@@ -92,4 +88,15 @@ The default `gen-tmp` will be the function inside `symath` package, which return
   (split-to-subexprs ...))
 ```
 
-**WARNING:** The library is in beta stage, it may be buggy, please don't rely on it completely, always test results for validity!
+## How it works
+
+The simplification algorithm is rather complicated, it contains the following main steps:
+
+1. All vectoir/matrix operations (if any) are implemented, producing final vector/marix, and each element is simplified separately
+2. Templates are applied
+3. The expression is normalized - all subtractions like (- a b c ...) are replaced to (+ a (* -1 (+ b c ...))) and divisions like (/ a b) to (* a (expt b -1))
+4. All functions with numeric arguments are computed, where possible
+5. Term reduction is performed for divisions and subtraction
+6. Bracketing common factors performed. Most common factors are extracted first
+7. Repeat 4-6 until the result is stabilized
+6. The result is denormailzed - all subtractions and divisions are returned back
