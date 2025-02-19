@@ -681,6 +681,55 @@
                                   (cdr e))))
                    e))))))
 
+(def-expr-cond collect-common-nums2 e ;; (+ (* 2 x) (* 2 y) (* 3 z) (* 3 q)) => (+ (* 2 (+ x y)) (* 3 (+ z q)))
+  :op (+ (let* ((nums (mapcar
+                        (lambda (x)
+                          (if (numberp x)
+                              x
+                              (if (and (isfunc '* x)
+                                       (numberp (cadr x)))
+                                  (cadr x)
+                                  1)))
+                        (cdr e)))
+                (nums (sort (mapcar #'car
+                                   (remove-if (lambda (x)
+                                                (or (mequal (car x) 1)
+                                                    (= (cdr x) 1)))
+                                              (mapcar (lambda (x) (cons x (count x nums)))
+                                                      (remove-duplicates nums))))
+                            #'<)))
+           (if nums
+               (cons '+
+                     (labels ((filter-terms (num terms)
+                                (if terms
+                                    (let* ((term (car terms))
+                                           (nt (cond ((numberp term) term)
+                                                     ((and (isfunc '* term) (numberp (cadr term)))
+                                                      (cadr term))
+                                                     (t 1))))
+                                      (multiple-value-bind (q r) (floor nt num)
+                                        (multiple-value-bind (t1 t2) (filter-terms num (cdr terms))
+                                          (if (= r 0)
+                                              (values (cons (if (numberp term)
+                                                                q
+                                                                (if (= q 1)
+                                                                    (if (> (length term) 3)
+                                                                        `(* ,@(cddr term))
+                                                                        (caddr term))
+                                                                    `(* ,q ,@(cddr term))))
+                                                            t1)
+                                                      t2)
+                                              (values t1 (cons term t2))))))))
+                              (process-terms (nums terms)
+                                (if nums
+                                    (multiple-value-bind (t1 t2) (filter-terms (car nums) terms)
+                                      (cons `(* ,(car nums) (+ ,@t1))
+                                            (process-terms (cdr nums) t2)))
+                                    terms)))
+                       (process-terms nums (cdr e))))
+               e))))
+
+
 (defun is-int (e)
   (or (rationalp e)
       (and (floatp e) (mequal (floor e) e))))
@@ -994,12 +1043,13 @@
             (values e nil)))))
     (values e nil)))
 
-(defun-stable-expr collect-common (e) ;; collect all comvon subexprs
+(defun-stable-expr collect-common (e) ;; collect all common subexprs
   (labels ((lp (e &optional (deep 0))
              (if (> deep 1000) (error "Too deep recursion in collect-common"))
              (let* ((e (math-rec-funcall #'collect-exprs
                          (math-rec-funcall #'collect-common-nums
-                           (math-rec-funcall #'extract-nums e)))))
+                           (math-rec-funcall #'collect-common-nums2
+                             (math-rec-funcall #'extract-nums e))))))
                (if (listp e)
                    (let ((e (cons (car e) (mapcar (lambda (x) (lp x (1+ deep))) (cdr e)))))
                      (if (isfunc '+ e)
