@@ -35,7 +35,7 @@ The simplification algorithm knows how to differentiate the following functions:
 ```
 But you can add a differentiation rule for your function using the `with-templates` macro. Here you can see, how to use a finite difference (a central one with the step `delta`) for the `foo` function:
 ```
-  (with-templates (((diff (foo $1) $2)
+  (with-templates (((diff (foo $1) $2) =>
                     `(/ (- (foo ,(replace-subexpr $1 $2 `(+ ,$2 delta)))
                            (foo ,(replace-subexpr $1 $2 `(- ,$2 delta))))
                         (* 2 delta))))
@@ -45,9 +45,9 @@ But you can add a differentiation rule for your function using the `with-templat
 ```
 The first argument of `with-templates` is a list of templates. Each template must have the following form:
 ```
-(pattern &rest code)
+(pattern => &rest code)
 ```
-The pattern is an expression, where the special symbols denote:
+The symbol `=>` can be ommited. The pattern is an expression, where the special symbols denote:
 - `$XX` - any expression, may be $1, $aaa, etc. All the `$`-symbols, except the single `$` can be referred in the code as variables.
 - `@XX` - a number or a constant (see below)
 - `_XX` - not a number/constant
