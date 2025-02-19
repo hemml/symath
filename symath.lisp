@@ -1301,7 +1301,7 @@
                            (error "Infinite loop while expanding templates")
                            (progn
                              (push e1 rec-log)
-                             (appl3 (math-rec-funcall #'denorm-expr e1) :deep (1+ deep))))
+                             (appl3 (math-rec-funcall #'denorm-expr (math-rec-funcall #'extract-nums e1)) :deep (1+ deep))))
                        e)))))
       (appl3 e))))
 
