@@ -1048,11 +1048,9 @@
 
 (defun-stable-expr collect-common (e) ;; collect all common subexprs
   (labels ((lp (e &optional (deep 0))
-             (if (> deep 1000) (error "Too deep recursion in collect-common"))
+             (if (> deep 10000) (error "Too deep recursion in collect-common"))
              (let* ((e (math-rec-funcall #'collect-exprs
-                         (math-rec-funcall #'collect-common-nums
-                           (math-rec-funcall #'collect-common-nums2
-                             (math-rec-funcall #'extract-nums e))))))
+                         (math-rec-funcall #'extract-nums e))))
                (if (listp e)
                    (let ((e (cons (car e) (mapcar (lambda (x) (lp x (1+ deep))) (cdr e)))))
                      (if (isfunc '+ e)
@@ -1062,7 +1060,9 @@
                                e))
                          e))
                    e))))
-    (lp e)))
+    (math-rec-funcall #'collect-common-nums
+      (math-rec-funcall #'collect-common-nums2
+        (lp e)))))
 
 (def-expr-cond calc-arrays e
    :op ((+ -) (if (some #'arrayp (cdr e))
