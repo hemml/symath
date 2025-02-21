@@ -1154,7 +1154,7 @@
            (,@(if ll '(math-rec-funcall)) ,fn ,res)))
       expr))
 
-(defun-stable-expr simplify-expr3 (e) ;; Simplify normalized expression
+(defun-stable-expr simplify-expr3-main (e) ;; Simplify normalized expression
   ;;(chain-debug
   (math-rec-funcall #'extract-nums
     (math-rec-funcall #'collect-same-expts
@@ -1175,6 +1175,13 @@
                                   (math-rec-funcall #'expand-expt2
                                     (math-rec-funcall #'expand-expt1
                                       (math-rec-funcall #'collect-exprs e))))))))))))))))))))
+
+(defun simplify-expr3 (e)
+  (if-let ((r (assoc e *simplify-cache* :test #'equal-expr)))
+    (cdr r)
+    (let ((res (simplify-expr3-main e)))
+      (push (cons e res) *simplify-cache*)
+      res)))
 
 
 
