@@ -375,18 +375,15 @@
 
 (defun collect-exprs (e)
   "Collecting * and + expressions: (+ a (+ b c)) => (+ a b c)"
-  (if (listp e)
-      (if (position (car e) '(+ *))
-          (cons (car e)
-                (mapcan
-                  (lambda (e1)
-                    (if (listp e1)
-                        (if (equal (car e) (car e1))
-                            (cdr e1)
-                            (list e1))
-                        (list e1)))
-                  (copy-list (cdr e))))
-          e)
+  (if (and (listp e)
+           (or (equal (car e) '+)
+               (equal (car e) '*)))
+      (cons (car e)
+            (loop for e1 in (cdr e) append
+              (if (and (listp e1)
+                       (equal (car e) (car e1)))
+                  (cdr e1)
+                  (list e1))))
       e))
 
 (def-expr-cond extract-nums e ;; Compute everything where it is possible
