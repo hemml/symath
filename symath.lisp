@@ -557,13 +557,19 @@
              `(+ ,@(cddr e) ,(cadr e))
               e)))
 
+(defun denorm-consts (e)
+  (case e
+    (&math-e (exp 1))
+    (otherwise e)))
+
 (defun denorm-expr (e)
   (chain-func-rec
     (denorm-expr-expt
      denorm-expr-plus-n
      denorm-expr-zop
      denorm-expr-minus1
-     denorm-expr-minus)
+     denorm-expr-minus
+     denorm-consts)
     e))
 
 (def-expr-cond expand-expt1 e ;; (expt (* a ...) n) => (* (expt a n) ...)
