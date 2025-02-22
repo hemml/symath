@@ -568,8 +568,7 @@
      denorm-expr-plus-n
      denorm-expr-zop
      denorm-expr-minus1
-     denorm-expr-minus
-     denorm-consts)
+     denorm-expr-minus)
     e))
 
 (def-expr-cond expand-expt1 e ;; (expt (* a ...) n) => (* (expt a n) ...)
@@ -1358,10 +1357,11 @@
                    ((diff (actan $1) _2) => `(* -1 (/ ,(simplify-expr2 `(diff ,$1 ,_2)) (+ 1 (expt $1 2))))))
     (if-let ((r (assoc e *simplify-cache* :test #'equal-expr)))
       (cdr r)
-      (let ((res (math-rec-funcall #'denorm-expr
-                   (simplify-expr3
-                     (math-rec-funcall #'norm-expr
-                        (apply-templates e))))))
+      (let ((res (math-rec-funcall #'denorm-consts
+                   (math-rec-funcall #'denorm-expr
+                     (simplify-expr3
+                       (math-rec-funcall #'norm-expr
+                          (apply-templates e)))))))
         (push (cons e res) *simplify-cache*)
         res))))
 
